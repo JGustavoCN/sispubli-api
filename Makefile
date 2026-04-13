@@ -8,7 +8,7 @@ PYTEST = $(VENV)\Scripts\pytest.exe
 BLACK = $(VENV)\Scripts\black.exe
 FLAKE8 = $(VENV)\Scripts\flake8.exe
 
-.PHONY: help setup install run test lint format clean
+.PHONY: help setup install run test test-verbose lint format clean
 
 # Alvo padrão: exibe o help
 all: help
@@ -21,9 +21,10 @@ help:
 	@echo "  make install - Instala/Atualiza pacotes (pip install)"
 	@echo "  make run     - Executa o scraper principal"
 	@echo "  make test    - Executa testes (pytest)"
-	@echo "  make lint    - Análise estática de código (flake8)"
-	@echo "  make format  - Formatação automática (black)"
-	@echo "  make clean   - Limpa cache e arquivos temporários"
+	@echo "  make test-v  - Testes verbose com logs (pytest -v)"
+	@echo "  make lint    - Analise estatica de codigo (flake8)"
+	@echo "  make format  - Formatacao automatica (black)"
+	@echo "  make clean   - Limpa cache e arquivos temporarios"
 	@echo "===================================================="
 
 setup:
@@ -39,11 +40,14 @@ run:
 test:
 	$(PYTHON) -m pytest tests/test_scraper.py
 
+test-v:
+	$(PYTHON) -m pytest tests/test_scraper.py -v --tb=short --log-cli-level=INFO
+
 lint:
-	$(FLAKE8) scraper.py tests/test_scraper.py
+	$(FLAKE8) scraper.py logger.py tests/test_scraper.py
 
 format:
-	$(BLACK) scraper.py tests/test_scraper.py
+	$(BLACK) scraper.py logger.py tests/test_scraper.py
 
 clean:
 	@if exist .pytest_cache rmdir /s /q .pytest_cache
