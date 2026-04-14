@@ -7,17 +7,31 @@
 
 ## Sumário
 
-- [Visão Geral](#visão-geral)
-- [Base URL](#base-url)
-- [Endpoints](#endpoints)
-  - [Health Check](#get-)
-  - [Buscar Certificados](#get-apicertificadoscpf)
-- [Fluxo do CPF (Ciclo de Vida Seguro)](#fluxo-do-cpf-ciclo-de-vida-seguro)
-- [Regras de Segurança (LGPD)](#regras-de-segurança-lgpd)
-- [Padrão URL Template](#padrão-url-template)
-- [Códigos de Erro](#códigos-de-erro)
-- [Tipos de Certificado](#tipos-de-certificado)
-- [Exemplos de Uso](#exemplos-de-uso)
+- [Sispubli API — Contrato e Documentação](#sispubli-api--contrato-e-documentação)
+  - [Sumário](#sumário)
+  - [Visão Geral](#visão-geral)
+  - [Base URL](#base-url)
+  - [Endpoints](#endpoints)
+    - [`GET /`](#get-)
+    - [`GET /api/certificados/{cpf}`](#get-apicertificadoscpf)
+      - [Parâmetros](#parâmetros)
+      - [Validação](#validação)
+      - [Resposta de Sucesso `200 OK`](#resposta-de-sucesso-200-ok)
+      - [Campos do Certificado](#campos-do-certificado)
+  - [Fluxo do CPF (Ciclo de Vida Seguro)](#fluxo-do-cpf-ciclo-de-vida-seguro)
+  - [Regras de Segurança (LGPD)](#regras-de-segurança-lgpd)
+    - [1. Mascaramento do CPF nos Logs](#1-mascaramento-do-cpf-nos-logs)
+    - [2. Geração do Hash SHA-256 (id\_unico)](#2-geração-do-hash-sha-256-id_unico)
+    - [3. URL Template (Padrão `{cpf}`)](#3-url-template-padrão-cpf)
+  - [Códigos de Erro](#códigos-de-erro)
+    - [Padrões de erro reconhecidos como `upstream_error`](#padrões-de-erro-reconhecidos-como-upstream_error)
+  - [Tipos de Certificado](#tipos-de-certificado)
+  - [Exemplos de Uso](#exemplos-de-uso)
+    - [curl](#curl)
+    - [Python (requests)](#python-requests)
+    - [JavaScript (fetch)](#javascript-fetch)
+  - [Cache](#cache)
+  - [Variáveis de Ambiente](#variáveis-de-ambiente)
 
 ---
 
@@ -26,6 +40,7 @@
 A Sispubli API é um gateway REST que abstrai o sistema legado de certificados do IFS (Sispubli). Ela realiza web scraping automatizado com tratamento de CSRF tokens, paginação e sessões, entregando os resultados em JSON padronizado.
 
 **Características principais:**
+
 - Nenhuma autenticação é necessária (o sistema Sispubli é público)
 - O CPF é o único dado pessoal manipulado
 - Conformidade LGPD: CPF **nunca** aparece em texto claro nas respostas
@@ -50,6 +65,7 @@ A Sispubli API é um gateway REST que abstrai o sistema legado de certificados d
 **Health Check** — Verifica se a API está no ar.
 
 **Resposta `200 OK`:**
+
 ```json
 {
   "status": "API do Sispubli rodando"
@@ -64,15 +80,15 @@ A Sispubli API é um gateway REST que abstrai o sistema legado de certificados d
 
 #### Parâmetros
 
-| Parâmetro | Tipo     | Local | Obrigatório | Descrição                              |
-| --------- | -------- | ----- | ----------- | -------------------------------------- |
-| `cpf`     | `string` | Path  | ✅ Sim       | CPF do titular (apenas números, 11 dígitos) |
+| Parâmetro | Tipo     | Local | Obrigatório | Descrição                                   |
+| --------- | -------- | ----- | ----------- | ------------------------------------------- |
+| `cpf`     | `string` | Path  | ✅ Sim      | CPF do titular (apenas números, 11 dígitos) |
 
 #### Validação
 
 O CPF é validado antes de qualquer processamento:
 
-```
+```bash
 1. cpf.isdigit() → deve conter apenas números
 2. len(cpf) == 11 → exatamente 11 caracteres
 ```
@@ -112,9 +128,9 @@ O CPF é validado antes de qualquer processamento:
 
 | Campo            | Tipo        | Descrição                                                                 |
 | ---------------- | ----------- | ------------------------------------------------------------------------- |
-| `id_unico`       | `string`    | Hash SHA-256 (64 chars hex) gerado com SALT secreto. Identificador LGPD. |
-| `titulo`         | `string`    | Título do evento conforme registrado no Sispubli.                        |
-| `url_download`   | `string?`   | URL Template para download. Contém `{cpf}` como placeholder.             |
+| `id_unico`       | `string`    | Hash SHA-256 (64 chars hex) gerado com SALT secreto. Identificador LGPD.  |
+| `titulo`         | `string`    | Título do evento conforme registrado no Sispubli.                         |
+| `url_download`   | `string?`   | URL Template para download. Contém `{cpf}` como placeholder.              |
 | `ano`            | `int`       | Ano de realização do evento.                                              |
 | `tipo_codigo`    | `int`       | Código numérico do tipo (1-11).                                           |
 | `tipo_descricao` | `string`    | Descrição legível do tipo de certificado.                                 |
@@ -125,7 +141,7 @@ O CPF é validado antes de qualquer processamento:
 
 O diagrama abaixo ilustra **exatamente onde** o CPF do titular é utilizado em cada etapa do processamento:
 
-```
+```bash
 Cliente (Flutter / MCP / curl)
 │
 │  GET /api/certificados/{cpf}
@@ -202,7 +218,7 @@ e acessa diretamente o PDF do Sispubli.
 
 Toda aparição do CPF nos logs passa obrigatoriamente pela função `mask_cpf()`:
 
-```
+```bash
 mask_cpf("12345678900") → "***.456.789-**"
 ```
 
@@ -219,7 +235,7 @@ mask_cpf("12345678900") → "***.456.789-**"
 
 Cada certificado recebe um identificador único gerado por:
 
-```
+```bash
 id_unico = SHA256(HASH_SALT + cpf + tipo + programa + edicao)
 ```
 
@@ -237,7 +253,7 @@ id_unico = SHA256(HASH_SALT + cpf + tipo + programa + edicao)
 
 As URLs de download retornadas pela API contêm o placeholder literal `{cpf}` em vez do CPF real:
 
-```
+```url
 http://intranet.ifs.edu.br/.../certificado_participacao_process.wsp?tmp.tx_cpf={cpf}&tmp.id_programa=1850&tmp.id_edicao=2011
 ```
 
@@ -271,10 +287,10 @@ Todas as respostas de erro seguem o envelope:
 | HTTP | `code`           | Causa                                               |
 | ---- | ---------------- | --------------------------------------------------- |
 | 400  | `invalid_cpf`    | CPF não é numérico ou não tem 11 dígitos.           |
-| 502  | `upstream_error`  | O Sispubli está fora do ar, retornou erro ou timeout. |
-| 500  | `internal_error`  | Erro inesperado no processamento interno.           |
+| 502  | `upstream_error` | O Sispubli está fora do ar, retornou erro ou timeout|
+| 500  | `internal_error` | Erro inesperado no processamento interno.           |
 
-### Padrões de erro reconhecidos como `upstream_error`:
+### Padrões de erro reconhecidos como `upstream_error`
 
 - `"Erro ao acessar"`
 - `"Erro ao enviar POST"`
@@ -289,17 +305,17 @@ O Sispubli classifica certificados por um código numérico (1-11). A API enriqu
 
 | `tipo_codigo` | `tipo_descricao`            | Endpoint Sispubli                                      | CPF na URL? |
 | ------------- | --------------------------- | ------------------------------------------------------ | ----------- |
-| 1             | Participação                | `certificado_participacao_process.wsp`                 | ✅ `{cpf}`   |
-| 2             | Autor                       | `certificado_autor_process.wsp`                        | ✅ `{cpf}`   |
-| 3             | Mini-Curso                  | `certificado_participacao_sub_evento_process.wsp`      | ✅ `{cpf}`   |
-| 4             | Avaliação                   | `certificado_avaliacao_process.wsp`                    | ✅ `{cpf}`   |
-| 5             | Avaliação de Programa       | `certificado_avaliacao_programa_process.wsp`           | ✅ `{cpf}`   |
-| 6             | Certificado Interno         | `certificado_process.wsp`                              | ❌ Não       |
-| 7             | Orientação                  | `certificado_orientador_process.wsp`                   | ✅ `{cpf}`   |
-| 8             | Aluno Voluntário            | `certificado_aluno_voluntario_process.wsp`             | ✅ `{cpf}`   |
-| 9             | Aluno Bolsista              | `certificado_aluno_bolsista_process.wsp`               | ✅ `{cpf}`   |
-| 10            | Ministrante de Sub-Evento   | `certificado_ministrante_sub_evento_process.wsp`       | ❌ Não       |
-| 11            | Coorientação                | `certificado_coorientador_process.wsp`                 | ✅ `{cpf}`   |
+| 1             | Participação                | `certificado_participacao_process.wsp`                 | ✅ `{cpf}`  |
+| 2             | Autor                       | `certificado_autor_process.wsp`                        | ✅ `{cpf}`  |
+| 3             | Mini-Curso                  | `certificado_participacao_sub_evento_process.wsp`      | ✅ `{cpf}`  |
+| 4             | Avaliação                   | `certificado_avaliacao_process.wsp`                    | ✅ `{cpf}`  |
+| 5             | Avaliação de Programa       | `certificado_avaliacao_programa_process.wsp`           | ✅ `{cpf}`  |
+| 6             | Certificado Interno         | `certificado_process.wsp`                              | ❌ Não      |
+| 7             | Orientação                  | `certificado_orientador_process.wsp`                   | ✅ `{cpf}`  |
+| 8             | Aluno Voluntário            | `certificado_aluno_voluntario_process.wsp`             | ✅ `{cpf}`  |
+| 9             | Aluno Bolsista              | `certificado_aluno_bolsista_process.wsp`               | ✅ `{cpf}`  |
+| 10            | Ministrante de Sub-Evento   | `certificado_ministrante_sub_evento_process.wsp`       | ❌ Não      |
+| 11            | Coorientação                | `certificado_coorientador_process.wsp`                 | ✅ `{cpf}`  |
 
 ---
 
@@ -360,12 +376,13 @@ A função `fetch_all_certificates()` utiliza `lru_cache(maxsize=128)`:
 
 ## Variáveis de Ambiente
 
-| Variável      | Obrigatória    | Padrão                   | Descrição                                      |
-| ------------- | -------------- | ------------------------ | ---------------------------------------------- |
-| `HASH_SALT`   | Em produção ✅  | `chave_secreta_padrao`   | Salt para SHA-256. Fail Fast se ausente em prod. |
-| `ENVIRONMENT` | Não            | `development`            | Define modo de execução (`development`/`production`). |
-| `CPF_TESTE`   | Apenas E2E     | —                        | CPF real para testes de integração.             |
+| Variável      | Obrigatória    | Padrão                   | Descrição                                           |
+| ------------- | -------------- | ------------------------ | --------------------------------------------------- |
+| `HASH_SALT`   | Em produção ✅ | `chave_secreta_padrao`   | Salt para SHA-256. Fail Fast se ausente em prod.    |
+| `ENVIRONMENT` | Não            | `development`            | Define modo de execução (`development`/`production`)|
+| `CPF_TESTE`   | Apenas E2E     | —                        | CPF real para testes de integração.                 |
 
 ---
 
-*Documento gerado automaticamente — Sispubli API v1.1.0*
+**Documento gerado automaticamente — Sispubli API v1.1.0**
+Contrato de API para o Sistema de Publicações do IFS.
