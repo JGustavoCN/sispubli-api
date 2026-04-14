@@ -7,10 +7,19 @@ Rotas:
     GET /                        : Health check
     GET /api/certificados/{cpf}  : Busca todos os certificados de um CPF
 
+Seguranca:
+    - Fail Fast em producao: se HASH_SALT nao estiver definido, o servidor
+      nao sobe (RuntimeError no lifespan).
+    - CPF nunca aparece em logs em texto claro.
+    - url_download usa padrao URL Template com {cpf} — cliente faz replace.
+
 Respostas seguem o padrao:
     Sucesso: {"data": {...}}
     Erro:    {"error": {"code": "...", "message": "..."}}
 """
+
+import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -23,44 +32,136 @@ log = logger.bind(module=__name__)
 
 
 # ===========================================================================
+# Lifespan — Fail Fast em producao
+# ===========================================================================
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Valida configuracoes criticas antes de aceitar requisicoes.
+
+    Em producao (ENVIRONMENT=production), o HASH_SALT DEVE estar definido.
+    Caso contrario, o servidor nao sobe — essa e uma falha intencional
+    para garantir conformidade LGPD desde o primeiro deploy.
+    """
+    environment = os.environ.get("ENVIRONMENT", "development")
+    hash_salt = os.environ.get("HASH_SALT", "")
+
+    if environment == "production" and not hash_salt:
+        log.critical(
+            "FALHA CRITICA DE CONFIGURACAO: ENVIRONMENT=production mas HASH_SALT nao definido. "
+            "Defina a variavel de ambiente HASH_SALT antes de subir em producao."
+        )
+        raise RuntimeError(
+            "HASH_SALT e obrigatorio em ambiente de producao. "
+            "Configure a variavel de ambiente antes de iniciar o servidor."
+        )
+
+    log.info(f"API iniciando em modo: {environment}")
+    yield
+    log.info("API encerrando")
+
+
+# ===========================================================================
 # Modelos Pydantic — Tipagem das respostas para Swagger/OpenAPI
 # ===========================================================================
 
 
 class CertificadoItem(BaseModel):
-    """Representa um certificado individual."""
+    """Representa um certificado individual no retorno da API.
 
-    id_unico: str = Field(..., description="Hash MD5 unico do certificado")
-    titulo: str = Field(..., description="Titulo do certificado")
-    url: str | None = Field(None, description="URL para download/visualizacao")
+    A url_download usa o padrao URL Template: o campo {cpf} deve ser
+    substituido pelo CPF real do usuario no cliente (Flutter/MCP)
+    antes de realizar o download. Isso evita trafegar dados sensiveis
+    no JSON de resposta.
+    """
+
+    id_unico: str = Field(
+        ...,
+        description="Hash SHA-256 unico do certificado (LGPD-compliant, gerado com SALT)",
+        json_schema_extra={
+            "example": "a3f8c2d1e4b7091f6e2a5d8c3b1f4e7a9d2c5b8e1f4a7c0d3b6e9f2a5c8b1e4"
+        },
+    )
+    titulo: str = Field(
+        ...,
+        description="Titulo do evento ou certificado conforme registrado no Sispubli",
+        json_schema_extra={"example": "Participacao no(a) SEPEX 2023"},
+    )
+    url_download: str | None = Field(
+        None,
+        description=(
+            "URL template para download do certificado. "
+            "Substitua '{cpf}' pelo CPF real antes de acessar. "
+            "Ex: url.replace('{cpf}', cpf_do_usuario)"
+        ),
+        json_schema_extra={
+            "example": (
+                "http://intranet.ifs.edu.br/publicacoes/relat/"
+                "certificado_participacao_process.wsp?"
+                "tmp.tx_cpf={cpf}&tmp.id_programa=1850&tmp.id_edicao=2011"
+            )
+        },
+    )
+    ano: int = Field(
+        ...,
+        description="Ano de realizacao do evento, extraido dos parametros do Sispubli",
+        json_schema_extra={"example": 2023},
+    )
+    tipo_codigo: int = Field(
+        ...,
+        description="Codigo numerico do tipo de certificado (1=Participacao, 2=Autor, etc.)",
+        json_schema_extra={"example": 1},
+    )
+    tipo_descricao: str = Field(
+        ...,
+        description="Descricao legivel do tipo de certificado",
+        json_schema_extra={"example": "Participacao"},
+    )
 
 
 class CertificadosResult(BaseModel):
-    """Resultado da busca de certificados."""
+    """Resultado consolidado da busca de certificados para um CPF."""
 
-    usuario_id: str = Field(..., description="CPF mascarado do titular")
-    total: int = Field(..., description="Quantidade total de certificados")
+    usuario_id: str = Field(
+        ...,
+        description="CPF mascarado do titular no formato ***.XXX.XXX-** (LGPD)",
+        json_schema_extra={"example": "***.456.789-**"},
+    )
+    total: int = Field(
+        ...,
+        description="Quantidade total de certificados encontrados",
+        json_schema_extra={"example": 42},
+    )
     certificados: list[CertificadoItem] = Field(
         default_factory=list,
-        description="Lista de certificados encontrados",
+        description="Lista completa de certificados disponiveis para o CPF informado",
     )
 
 
 class CertificadosResponse(BaseModel):
-    """Envelope de resposta de sucesso."""
+    """Envelope de resposta de sucesso — dados aninhados em 'data'."""
 
     data: CertificadosResult
 
 
 class ErrorDetail(BaseModel):
-    """Detalhe de erro padronizado."""
+    """Detalhe de erro padronizado para facilitar tratamento no cliente."""
 
-    code: str = Field(..., description="Codigo do erro (ex: invalid_cpf)")
-    message: str = Field(..., description="Mensagem descritiva do erro")
+    code: str = Field(
+        ...,
+        description="Codigo de erro em snake_case para tratamento programatico",
+        json_schema_extra={"example": "invalid_cpf"},
+    )
+    message: str = Field(
+        ...,
+        description="Mensagem descritiva do erro em portugues",
+        json_schema_extra={"example": "CPF deve conter exatamente 11 digitos numericos."},
+    )
 
 
 class ErrorResponse(BaseModel):
-    """Envelope de resposta de erro."""
+    """Envelope de resposta de erro — detalhes aninhados em 'error'."""
 
     error: ErrorDetail
 
@@ -68,7 +169,11 @@ class ErrorResponse(BaseModel):
 class HealthResponse(BaseModel):
     """Resposta do health check."""
 
-    status: str = Field(..., description="Status da API")
+    status: str = Field(
+        ...,
+        description="Status atual da API",
+        json_schema_extra={"example": "API do Sispubli rodando"},
+    )
 
 
 # ===========================================================================
@@ -77,8 +182,13 @@ class HealthResponse(BaseModel):
 
 app = FastAPI(
     title="Sispubli Certificados API",
-    description="API para extracao de certificados do sistema Sispubli/IFS",
-    version="1.0.0",
+    description=(
+        "API REST para extracao de certificados do sistema Sispubli/IFS.\n\n"
+        "**Nota de seguranca**: o campo `url_download` usa o padrao URL Template. "
+        "Substitua `{cpf}` pelo CPF real do usuario antes de acessar a URL."
+    ),
+    version="1.1.0",
+    lifespan=lifespan,
 )
 
 # ---------------------------------------------------------------------------
@@ -121,6 +231,10 @@ def health_check():
 )
 def buscar_certificados(cpf: str):
     """Busca todos os certificados disponiveis para um CPF.
+
+    O CPF e validado, enviado ao Sispubli e nunca retornado em texto claro.
+    O campo `url_download` de cada certificado contem `{cpf}` como placeholder
+    — o cliente deve substituir pelo CPF real antes de acessar.
 
     Args:
         cpf: CPF do titular (apenas numeros, 11 digitos).

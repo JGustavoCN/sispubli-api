@@ -1,6 +1,6 @@
 [project]
 name = "sispubli-api"
-version = "0.1.0"
+version = "1.1.0"
 description = "API REST para extracao de certificados do sistema Sispubli/IFS"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -45,8 +45,6 @@ select = [
 ]
 ignore = [
     "S101",  # assert em testes e OK
-    "S303",  # hashlib MD5 em contexto nao-criptografico e OK
-    "S324",  # hashlib MD5 usado para fingerprinting, nao criptografia
 ]
 
 [tool.ruff.lint.per-file-ignores]
