@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "regions": ["gru1"],
+  "regions": ["iad1"],
   "builds": [
     {
       "src": "api.py",
