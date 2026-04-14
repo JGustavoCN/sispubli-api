@@ -20,9 +20,9 @@ import warnings
 import requests
 from bs4 import BeautifulSoup
 
-from logger import get_logger
+from logger import logger
 
-log = get_logger(__name__)
+log = logger.bind(module=__name__)
 
 URL = "http://intranet.ifs.edu.br/publicacoes/site/indexCertificados.wsp"
 BASE_URL = "http://intranet.ifs.edu.br/publicacoes/relat"
@@ -111,11 +111,11 @@ def mask_cpf(cpf: str) -> str:
         CPF mascarado. Se invalido, retorna '***.***-**'.
     """
     if len(cpf) < 11:
-        log.warning("CPF com tamanho invalido (%d digitos): mascarando generico", len(cpf))
+        log.warning(f"CPF com tamanho invalido ({len(cpf)} digitos): mascarando generico")
         return "***.***.***-**"
 
     masked = f"***.{cpf[3:6]}.{cpf[6:9]}-**"
-    log.debug("CPF mascarado: %s", masked)
+    log.debug(f"CPF mascarado: {masked}")
     return masked
 
 
@@ -136,12 +136,8 @@ def generate_cert_id(cpf: str, tipo: str, programa: str, edicao: str) -> str:
     raw = f"{cpf}{tipo}{programa}{edicao}"
     cert_hash = hashlib.md5(raw.encode("utf-8")).hexdigest()
     log.debug(
-        "Hash gerado para [cpf=%s..., tipo=%s, prog=%s, edic=%s]: %s",
-        cpf[:3],
-        tipo,
-        programa,
-        edicao,
-        cert_hash,
+        f"Hash gerado para [cpf={cpf[:3]}..., tipo={tipo},"
+        f" prog={programa}, edic={edicao}]: {cert_hash}"
     )
     return cert_hash
 
@@ -160,20 +156,20 @@ def montar_url(params: list) -> str | None:
         URL completa ou None se o tipo nao for mapeado.
     """
     if len(params) < 7:
-        log.error("Parametros insuficientes para montar URL: %s", params)
+        log.error(f"Parametros insuficientes para montar URL: {params}")
         return None
 
     tipo = params[1]
     type_config = URL_TYPE_MAP.get(tipo)
 
     if type_config is None:
-        log.warning("Tipo de certificado nao mapeado: '%s' — URL nao gerada", tipo)
+        log.warning(f"Tipo de certificado nao mapeado: '{tipo}' — URL nao gerada")
         return None
 
     endpoint = type_config["endpoint"]
     query_params = type_config["params_fn"](params)
     url = f"{BASE_URL}/{endpoint}?{query_params}"
-    log.debug("URL montada [tipo=%s]: %s", tipo, url)
+    log.debug(f"URL montada [tipo={tipo}]: {url}")
     return url
 
 
@@ -201,10 +197,10 @@ def extract_next_offset(html_content: str) -> int | None:
 
     if match:
         offset = int(match.group(1))
-        log.debug("Offset da proxima pagina: %d", offset)
+        log.debug(f"Offset da proxima pagina: {offset}")
         return offset
 
-    log.debug("Link nav_go encontrado mas sem offset valido: %s", href)
+    log.debug(f"Link nav_go encontrado mas sem offset valido: {href}")
     return None
 
 
@@ -228,13 +224,13 @@ def extract_data(html_content: str) -> dict:
     # Extrair token
     token_input = soup.find("input", {"name": "wi.token"})
     token = token_input["value"] if token_input else None
-    log.debug("Token extraido: %s", token)
+    log.debug(f"Token extraido: {token}")
 
     certificates = []
 
     # Extrair certificados via links abrirCertificado
     links = soup.find_all("a", href=re.compile(r"abrirCertificado"))
-    log.debug("Links abrirCertificado encontrados: %d", len(links))
+    log.debug(f"Links abrirCertificado encontrados: {len(links)}")
 
     for link in links:
         href = link["href"]
@@ -249,13 +245,10 @@ def extract_data(html_content: str) -> dict:
                 if title_td:
                     title = title_td.get_text(strip=True)
                     certificates.append({"title": title, "params": params})
-                    log.debug("Certificado encontrado: %s", title)
+                    log.debug(f"Certificado encontrado: {title}")
 
-    log.info(
-        "Pagina processada: token=%s, certificados=%d",
-        token[:8] + "..." if token else "N/A",
-        len(certificates),
-    )
+    token_display = token[:8] + "..." if token else "N/A"
+    log.info(f"Pagina processada: token={token_display}, certificados={len(certificates)}")
     return {"token": token, "certificates": certificates}
 
 
@@ -287,7 +280,7 @@ def fetch_all_certificates(cpf: str) -> dict:
     """
     log.info("=" * 60)
     log.info("INICIO DA BUSCA DE CERTIFICADOS")
-    log.info("CPF: %s", mask_cpf(cpf))
+    log.info(f"CPF: {mask_cpf(cpf)}")
     log.info("=" * 60)
 
     session = requests.Session()
@@ -296,7 +289,7 @@ def fetch_all_certificates(cpf: str) -> dict:
     log.info("[PASSO 1] GET inicial para obter token e cookies")
     response_get = session.get(URL)
     if response_get.status_code != 200:
-        log.error("Falha no GET inicial: HTTP %d", response_get.status_code)
+        log.error(f"Falha no GET inicial: HTTP {response_get.status_code}")
         raise Exception(f"Erro ao acessar pagina inicial: {response_get.status_code}")
 
     initial_data = extract_data(response_get.text)
@@ -306,7 +299,7 @@ def fetch_all_certificates(cpf: str) -> dict:
         log.error("Token nao encontrado na pagina inicial")
         raise Exception("Token nao encontrado na pagina inicial")
 
-    log.info("[PASSO 1] Token obtido: %s...", token[:8])
+    log.info(f"[PASSO 1] Token obtido: {token[:8]}...")
 
     # --- Passo 2: POST inicial com CPF ---
     log.info("[PASSO 2] POST inicial com CPF")
@@ -320,37 +313,35 @@ def fetch_all_certificates(cpf: str) -> dict:
 
     response_post = session.post(URL, data=payload)
     if response_post.status_code != 200:
-        log.error("Falha no POST inicial: HTTP %d", response_post.status_code)
+        log.error(f"Falha no POST inicial: HTTP {response_post.status_code}")
         raise Exception(f"Erro ao enviar POST: {response_post.status_code}")
 
     # --- Passo 3: Loop de paginacao ---
-    log.info("[PASSO 3] Iniciando loop de paginacao (MAX_PAGES=%d)", MAX_PAGES)
+    log.info(f"[PASSO 3] Iniciando loop de paginacao (MAX_PAGES={MAX_PAGES})")
 
     all_certificates_raw = []
     page_num = 1
     current_html = response_post.text
 
     while page_num <= MAX_PAGES:
-        log.info("[PAGINA %d] Processando...", page_num)
+        log.info(f"[PAGINA {page_num}] Processando...")
 
         page_data = extract_data(current_html)
         certs_in_page = page_data["certificates"]
         all_certificates_raw.extend(certs_in_page)
 
         log.info(
-            "[PAGINA %d] %d certificados extraidos (acumulado: %d)",
-            page_num,
-            len(certs_in_page),
-            len(all_certificates_raw),
+            f"[PAGINA {page_num}] {len(certs_in_page)} certificados extraidos"
+            f" (acumulado: {len(all_certificates_raw)})"
         )
 
         # Verificar se ha proxima pagina
         next_offset = extract_next_offset(current_html)
         if next_offset is None:
-            log.info("[PAGINA %d] Ultima pagina detectada — encerrando loop", page_num)
+            log.info(f"[PAGINA {page_num}] Ultima pagina detectada — encerrando loop")
             break
 
-        log.info("[PAGINA %d] Proxima pagina detectada: offset=%d", page_num, next_offset)
+        log.info(f"[PAGINA {page_num}] Proxima pagina detectada: offset={next_offset}")
 
         # Atualizar token da pagina atual (pode mudar entre paginas)
         if page_data["token"]:
@@ -368,20 +359,18 @@ def fetch_all_certificates(cpf: str) -> dict:
 
         response_next = session.post(URL, data=payload_next)
         if response_next.status_code != 200:
-            log.error(
-                "Falha no POST da pagina %d: HTTP %d", page_num + 1, response_next.status_code
-            )
+            log.error(f"Falha no POST da pagina {page_num + 1}: HTTP {response_next.status_code}")
             raise Exception(f"Erro ao buscar pagina {page_num + 1}: {response_next.status_code}")
 
         current_html = response_next.text
         page_num += 1
     else:
         log.warning(
-            "LIMITE DE PAGINAS ATINGIDO (MAX_PAGES=%d) — loop encerrado por seguranca", MAX_PAGES
+            f"LIMITE DE PAGINAS ATINGIDO (MAX_PAGES={MAX_PAGES}) — loop encerrado por seguranca"
         )
 
     # --- Passo 4: Consolidar resultado ---
-    log.info("[PASSO 4] Consolidando %d certificados...", len(all_certificates_raw))
+    log.info(f"[PASSO 4] Consolidando {len(all_certificates_raw)} certificados...")
 
     certificados_finais = []
     for cert in all_certificates_raw:
@@ -401,7 +390,7 @@ def fetch_all_certificates(cpf: str) -> dict:
                 "url": url,
             }
         )
-        log.debug("Certificado consolidado: id=%s titulo=%s", cert_id[:8], cert["title"])
+        log.debug(f"Certificado consolidado: id={cert_id[:8]} titulo={cert['title']}")
 
     resultado = {
         "usuario_id": mask_cpf(cpf),
@@ -411,7 +400,7 @@ def fetch_all_certificates(cpf: str) -> dict:
 
     log.info("=" * 60)
     log.info("BUSCA FINALIZADA")
-    log.info("Usuario: %s | Total: %d certificados", resultado["usuario_id"], resultado["total"])
+    log.info(f"Usuario: {resultado['usuario_id']} | Total: {resultado['total']} certificados")
     log.info("=" * 60)
 
     return resultado
@@ -468,14 +457,9 @@ def fetch_certificates(cpf: str) -> dict:
 
 if __name__ == "__main__":
     import json
-
-    # Em modo CLI, ativar logs DEBUG para visibilidade completa
-    import logging
     import os
 
     from dotenv import load_dotenv
-
-    logging.getLogger().setLevel(logging.DEBUG)
 
     load_dotenv()
     cpf = os.getenv("CPF_TESTE")
@@ -490,4 +474,4 @@ if __name__ == "__main__":
             print("=" * 60)
             print(json.dumps(result, indent=2, ensure_ascii=False))
         except Exception as e:
-            log.error("Erro durante execucao: %s", e)
+            log.error(f"Erro durante execucao: {e}")

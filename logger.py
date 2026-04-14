@@ -1,46 +1,73 @@
 """
-Configuracao centralizada de logging para o Scraper Sispubli.
+Configuracao centralizada de logging para o Sispubli API — Loguru.
+
+Comportamento dinamico baseado na variavel de ambiente ENVIRONMENT:
+    - "test"        : Logs desabilitados (silencio total para pytest)
+    - "development" : Logs coloridos no terminal, nivel DEBUG (padrao)
+    - "production"  : Logs serializados (JSON) no stdout, nivel INFO
 
 Uso:
-    from logger import get_logger
-    log = get_logger(__name__)
-    log.info("Mensagem")
+    from logger import logger
+    logger.info("Mensagem")
 
-Niveis:
-    DEBUG   - Detalhes internos (payloads, offsets, HTML parcial)
-    INFO    - Fluxo principal (inicio de busca, pagina processada, totais)
-    WARNING - Situacoes inesperadas mas nao fatais (tipo desconhecido, MAX_PAGES)
-    ERROR   - Falhas que interrompem o fluxo (HTTP != 200, token ausente)
+    # Ou com contexto de modulo:
+    from logger import logger
+    log = logger.bind(module="meu_modulo")
+    log.info("Mensagem com contexto")
 """
 
-import logging
+import os
 import sys
 
-# Formato padrao: timestamp | nivel | modulo | mensagem
-LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)-20s | %(message)s"
-DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+from loguru import logger
 
-# Flag para evitar configuracao duplicada
-_configured = False
+# Remover o sink padrao do Loguru (stderr) para configurar do zero
+logger.remove()
+
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
+
+if ENVIRONMENT == "test":
+    # Silencio total — sem nenhum sink configurado
+    pass
+
+elif ENVIRONMENT == "production":
+    # JSON serializado para stdout, nivel INFO
+    logger.add(
+        sys.stdout,
+        level="INFO",
+        serialize=True,
+        backtrace=False,
+        diagnose=False,
+    )
+
+else:
+    # development (padrao): logs coloridos no terminal, nivel DEBUG
+    logger.add(
+        sys.stdout,
+        level="DEBUG",
+        colorize=True,
+        format=(
+            "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+            "<level>{level: <8}</level> | "
+            "<cyan>{extra[module]!s: <20}</cyan> | "
+            "<level>{message}</level>"
+        ),
+        backtrace=True,
+        diagnose=True,
+    )
 
 
-def setup_logging(level: int = logging.INFO) -> None:
-    """Configura o logging raiz uma unica vez."""
-    global _configured
-    if _configured:
-        return
+def get_logger(name: str) -> logger.__class__:
+    """Wrapper de compatibilidade — retorna logger com contexto de modulo.
 
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT))
+    Permite manter imports existentes sem quebrar:
+        from logger import get_logger
+        log = get_logger(__name__)
 
-    root = logging.getLogger()
-    root.setLevel(level)
-    root.addHandler(handler)
+    Args:
+        name: Nome do modulo (tipicamente __name__).
 
-    _configured = True
-
-
-def get_logger(name: str) -> logging.Logger:
-    """Retorna um logger nomeado. Configura o sistema se necessario."""
-    setup_logging()
-    return logging.getLogger(name)
+    Returns:
+        Logger Loguru com o campo 'module' vinculado.
+    """
+    return logger.bind(module=name)
