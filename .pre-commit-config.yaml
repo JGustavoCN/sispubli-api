@@ -1,0 +1,44 @@
+# Pre-commit hooks — executa automaticamente antes de cada commit
+# Instalar: uv run pre-commit install
+# Rodar manualmente: uv run pre-commit run --all-files
+
+repos:
+  # --- Qualidade de Código ---
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.6
+    hooks:
+      - id: ruff        # Linting
+        args: [--fix]
+      - id: ruff-format # Formatação
+
+  # --- Higiene Geral ---
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: check-merge-conflict
+      - id: debug-statements  # Detecta print/breakpoint esquecidos
+
+  # --- Conventional Commits ---
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.0.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args:
+          - feat
+          - fix
+          - docs
+          - style
+          - refactor
+          - perf
+          - test
+          - build
+          - ci
+          - chore
+          - revert

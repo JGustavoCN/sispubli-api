@@ -11,15 +11,15 @@ Cobertura:
 """
 
 import logging
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from scraper import (
     extract_data,
-    mask_cpf,
-    generate_cert_id,
-    montar_url,
     extract_next_offset,
     fetch_all_certificates,
+    generate_cert_id,
+    mask_cpf,
+    montar_url,
 )
 
 log = logging.getLogger(__name__)
@@ -429,9 +429,7 @@ class TestFetchAllCertificates:
 
         assert result["total"] == 1
         assert mock_session.post.call_count == 1
-        log.info(
-            "POST call_count: %d (esperado 1)", mock_session.post.call_count
-        )
+        log.info("POST call_count: %d (esperado 1)", mock_session.post.call_count)
 
         log.info("--- FIM: teste de pagina unica ---")
 
@@ -502,19 +500,14 @@ class TestExtractDataLegacy:
         log.info("Testando extract_data com mock HTML em arquivo")
         mock_path = os.path.join("tests", "mock_sispubli.html")
 
-        with open(mock_path, "r", encoding="utf-8") as f:
+        with open(mock_path, encoding="utf-8") as f:
             html_content = f.read()
 
         data = extract_data(html_content)
 
         assert data["token"] == "F8EQDGSELWFLUEFV0HIV"
-        assert (
-            data["certificates"][0]["title"]
-            == "Participação no(a) PFisc 2023"
-        )
-        expected_params = [
-            "00000000000", "1", "1850", "2011", "0", "2023", "0"
-        ]
+        assert data["certificates"][0]["title"] == "Participação no(a) PFisc 2023"
+        expected_params = ["00000000000", "1", "1850", "2011", "0", "2023", "0"]
         assert data["certificates"][0]["params"] == expected_params
         log.info(
             "extract_data legado OK: %d certificados",

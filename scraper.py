@@ -41,15 +41,11 @@ MAX_PAGES = 50
 URL_TYPE_MAP = {
     "1": {
         "endpoint": "certificado_participacao_process.wsp",
-        "params_fn": lambda p: (
-            f"tmp.tx_cpf={p[0]}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}"
-        ),
+        "params_fn": lambda p: f"tmp.tx_cpf={p[0]}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}",
     },
     "2": {
         "endpoint": "certificado_autor_process.wsp",
-        "params_fn": lambda p: (
-            f"tmp.tx_cpf={p[0]}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}"
-        ),
+        "params_fn": lambda p: f"tmp.tx_cpf={p[0]}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}",
     },
     "3": {
         "endpoint": "certificado_participacao_sub_evento_process.wsp",
@@ -60,52 +56,38 @@ URL_TYPE_MAP = {
     },
     "4": {
         "endpoint": "certificado_avaliacao_process.wsp",
-        "params_fn": lambda p: (
-            f"tmp.tx_cpf={p[0]}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}"
-        ),
+        "params_fn": lambda p: f"tmp.tx_cpf={p[0]}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}",
     },
     "5": {
         "endpoint": "certificado_avaliacao_programa_process.wsp",
-        "params_fn": lambda p: (
-            f"tmp.tx_cpf={p[0]}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}"
-        ),
+        "params_fn": lambda p: f"tmp.tx_cpf={p[0]}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}",
     },
     "6": {
         "endpoint": "certificado_process.wsp",
-        "params_fn": lambda p: (
-            f"tmp.id={p[6]}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}"
-        ),
+        "params_fn": lambda p: f"tmp.id={p[6]}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}",
     },
     "7": {
         "endpoint": "certificado_orientador_process.wsp",
         "params_fn": lambda p: (
-            f"tmp.tx_cpf={p[0]}&tmp.id_programa={p[2]}"
-            f"&tmp.id_edicao={p[3]}&tmp.id_artigo={p[6]}"
+            f"tmp.tx_cpf={p[0]}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}&tmp.id_artigo={p[6]}"
         ),
     },
     "8": {
         "endpoint": "certificado_aluno_voluntario_process.wsp",
-        "params_fn": lambda p: (
-            f"tmp.tx_cpf={p[0]}&tmp.id_artigo={p[6]}"
-        ),
+        "params_fn": lambda p: f"tmp.tx_cpf={p[0]}&tmp.id_artigo={p[6]}",
     },
     "9": {
         "endpoint": "certificado_aluno_bolsista_process.wsp",
-        "params_fn": lambda p: (
-            f"tmp.tx_cpf={p[0]}&tmp.id_artigo={p[6]}"
-        ),
+        "params_fn": lambda p: f"tmp.tx_cpf={p[0]}&tmp.id_artigo={p[6]}",
     },
     "10": {
         "endpoint": "certificado_ministrante_sub_evento_process.wsp",
-        "params_fn": lambda p: (
-            f"tmp.id_sub_evento={p[4]}"
-        ),
+        "params_fn": lambda p: f"tmp.id_sub_evento={p[4]}",
     },
     "11": {
         "endpoint": "certificado_coorientador_process.wsp",
         "params_fn": lambda p: (
-            f"tmp.tx_cpf={p[0]}&tmp.id_programa={p[2]}"
-            f"&tmp.id_edicao={p[3]}&tmp.id_artigo={p[6]}"
+            f"tmp.tx_cpf={p[0]}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}&tmp.id_artigo={p[6]}"
         ),
     },
 }
@@ -153,8 +135,14 @@ def generate_cert_id(cpf: str, tipo: str, programa: str, edicao: str) -> str:
     """
     raw = f"{cpf}{tipo}{programa}{edicao}"
     cert_hash = hashlib.md5(raw.encode("utf-8")).hexdigest()
-    log.debug("Hash gerado para [cpf=%s..., tipo=%s, prog=%s, edic=%s]: %s",
-              cpf[:3], tipo, programa, edicao, cert_hash)
+    log.debug(
+        "Hash gerado para [cpf=%s..., tipo=%s, prog=%s, edic=%s]: %s",
+        cpf[:3],
+        tipo,
+        programa,
+        edicao,
+        cert_hash,
+    )
     return cert_hash
 
 
@@ -263,8 +251,11 @@ def extract_data(html_content: str) -> dict:
                     certificates.append({"title": title, "params": params})
                     log.debug("Certificado encontrado: %s", title)
 
-    log.info("Pagina processada: token=%s, certificados=%d",
-             token[:8] + "..." if token else "N/A", len(certificates))
+    log.info(
+        "Pagina processada: token=%s, certificados=%d",
+        token[:8] + "..." if token else "N/A",
+        len(certificates),
+    )
     return {"token": token, "certificates": certificates}
 
 
@@ -294,10 +285,10 @@ def fetch_all_certificates(cpf: str) -> dict:
     Raises:
         Exception: Se o acesso HTTP falhar ou token nao for encontrado.
     """
-    log.info("="*60)
+    log.info("=" * 60)
     log.info("INICIO DA BUSCA DE CERTIFICADOS")
     log.info("CPF: %s", mask_cpf(cpf))
-    log.info("="*60)
+    log.info("=" * 60)
 
     session = requests.Session()
 
@@ -346,8 +337,12 @@ def fetch_all_certificates(cpf: str) -> dict:
         certs_in_page = page_data["certificates"]
         all_certificates_raw.extend(certs_in_page)
 
-        log.info("[PAGINA %d] %d certificados extraidos (acumulado: %d)",
-                 page_num, len(certs_in_page), len(all_certificates_raw))
+        log.info(
+            "[PAGINA %d] %d certificados extraidos (acumulado: %d)",
+            page_num,
+            len(certs_in_page),
+            len(all_certificates_raw),
+        )
 
         # Verificar se ha proxima pagina
         next_offset = extract_next_offset(current_html)
@@ -373,15 +368,17 @@ def fetch_all_certificates(cpf: str) -> dict:
 
         response_next = session.post(URL, data=payload_next)
         if response_next.status_code != 200:
-            log.error("Falha no POST da pagina %d: HTTP %d",
-                      page_num + 1, response_next.status_code)
+            log.error(
+                "Falha no POST da pagina %d: HTTP %d", page_num + 1, response_next.status_code
+            )
             raise Exception(f"Erro ao buscar pagina {page_num + 1}: {response_next.status_code}")
 
         current_html = response_next.text
         page_num += 1
     else:
-        log.warning("LIMITE DE PAGINAS ATINGIDO (MAX_PAGES=%d) — loop encerrado por seguranca",
-                    MAX_PAGES)
+        log.warning(
+            "LIMITE DE PAGINAS ATINGIDO (MAX_PAGES=%d) — loop encerrado por seguranca", MAX_PAGES
+        )
 
     # --- Passo 4: Consolidar resultado ---
     log.info("[PASSO 4] Consolidando %d certificados...", len(all_certificates_raw))
@@ -397,11 +394,13 @@ def fetch_all_certificates(cpf: str) -> dict:
         cert_id = generate_cert_id(cpf_cert, tipo, programa, edicao)
         url = montar_url(params)
 
-        certificados_finais.append({
-            "id_unico": cert_id,
-            "titulo": cert["title"],
-            "url": url,
-        })
+        certificados_finais.append(
+            {
+                "id_unico": cert_id,
+                "titulo": cert["title"],
+                "url": url,
+            }
+        )
         log.debug("Certificado consolidado: id=%s titulo=%s", cert_id[:8], cert["title"])
 
     resultado = {
@@ -410,10 +409,10 @@ def fetch_all_certificates(cpf: str) -> dict:
         "certificados": certificados_finais,
     }
 
-    log.info("="*60)
+    log.info("=" * 60)
     log.info("BUSCA FINALIZADA")
     log.info("Usuario: %s | Total: %d certificados", resultado["usuario_id"], resultado["total"])
-    log.info("="*60)
+    log.info("=" * 60)
 
     return resultado
 
@@ -469,12 +468,13 @@ def fetch_certificates(cpf: str) -> dict:
 
 if __name__ == "__main__":
     import json
+
+    # Em modo CLI, ativar logs DEBUG para visibilidade completa
+    import logging
     import os
 
     from dotenv import load_dotenv
 
-    # Em modo CLI, ativar logs DEBUG para visibilidade completa
-    import logging
     logging.getLogger().setLevel(logging.DEBUG)
 
     load_dotenv()

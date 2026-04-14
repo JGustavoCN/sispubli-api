@@ -160,9 +160,7 @@ class TestScraperErrors:
         """Se o Sispubli retornar erro HTTP, a API deve retornar 502."""
         log.info("Testando Sispubli fora do ar (502)")
 
-        mock_fetch.side_effect = Exception(
-            "Erro ao acessar pagina inicial: 503"
-        )
+        mock_fetch.side_effect = Exception("Erro ao acessar pagina inicial: 503")
 
         client = TestClient(app)
         response = client.get("/api/certificados/12345678900")
@@ -195,9 +193,7 @@ class TestScraperErrors:
         """Token ausente indica problema no Sispubli -> 502."""
         log.info("Testando token nao encontrado (502)")
 
-        mock_fetch.side_effect = Exception(
-            "Token nao encontrado na pagina inicial"
-        )
+        mock_fetch.side_effect = Exception("Token nao encontrado na pagina inicial")
 
         client = TestClient(app)
         response = client.get("/api/certificados/12345678900")
