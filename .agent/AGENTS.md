@@ -15,7 +15,7 @@ This is a **production-ready AI coding plugin** providing 38 specialized agents,
 ## Available Agents
 
 | Agent | Purpose | When to Use |
-|-------|---------|-------------|
+| ------- | --------- | ------------- |
 | planner | Implementation planning | Complex features, refactoring |
 | architect | System design and scalability | Architectural decisions |
 | tdd-guide | Test-driven development | New features, bug fixes |
@@ -46,6 +46,7 @@ This is a **production-ready AI coding plugin** providing 38 specialized agents,
 ## Agent Orchestration
 
 Use agents proactively without user prompt:
+
 - Complex feature requests → **planner**
 - Code just written/modified → **code-reviewer**
 - Bug fix or new feature → **tdd-guide**
@@ -59,6 +60,7 @@ Use parallel execution for independent operations — launch multiple agents sim
 ## Security Guidelines
 
 **Before ANY commit:**
+
 - No hardcoded secrets (API keys, passwords, tokens)
 - All user inputs validated
 - SQL injection prevention (parameterized queries)
@@ -83,6 +85,7 @@ Use parallel execution for independent operations — launch multiple agents sim
 **Input validation:** Validate all user input at system boundaries. Use schema-based validation. Fail fast with clear messages. Never trust external data.
 
 **Code quality checklist:**
+
 - Functions small (<50 lines), files focused (<800 lines)
 - No deep nesting (>4 levels)
 - Proper error handling, no hardcoded values
@@ -90,14 +93,16 @@ Use parallel execution for independent operations — launch multiple agents sim
 
 ## Testing Requirements
 
-**Minimum coverage: 80%**
+### **Minimum coverage: 80%**
 
 Test types (all required):
+
 1. **Unit tests** — Individual functions, utilities, components
 2. **Integration tests** — API endpoints, database operations
 3. **E2E tests** — Critical user flows
 
-**TDD workflow (mandatory):**
+### **TDD workflow (mandatory):**
+
 1. Write test first (RED) — test should FAIL
 2. Write minimal implementation (GREEN) — test should PASS
 3. Refactor (IMPROVE) — verify coverage 80%+
@@ -144,7 +149,7 @@ Troubleshoot failures: check test isolation → verify mocks → fix implementat
 
 ## Project Structure
 
-```
+```bash
 agents/          — 38 specialized subagents
 skills/          — 156 workflow skills and domain knowledge
 commands/        — 72 slash commands

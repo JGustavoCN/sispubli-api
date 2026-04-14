@@ -11,33 +11,46 @@ Ignore qualquer referência à palavra "Claude" nos arquivos de regras ou skills
 **Stack Tecnológica:** Python 3.13+, FastAPI, Uvicorn, requests, BeautifulSoup4, Loguru (logs estruturados), python-dotenv, pytest e uv (package manager).
 **Objetivo Atual:** Fase de estabilidade (Produção). Foco na manutenção limpa, alta cobertura de código por testes automatizados, integração fluida e deploys automáticos via Vercel/Docker.
 
+## 0. Princípios Fundamentais (Core Principles)
+
+- **Plan Before Execute:** Planeje feature por feature e discuta suas metodologias antes de despachar grandes refatorações do código de uma só vez.
+- **Test-Driven Workflow:** O roteiro de testes é obrigatório: 1. Teste falha (RED) 2. Implementação crua (GREEN) 3. Refatoração eficiente (IMPROVE). A meta não negociável de cobertura é de 80%+.
+- **Security-First:** Proteja as extremidades contra injeções. Valide *all the things*.
+- **Imutabilidade:** Retorne cópias limpas e transformadas das estruturas de dados. Nunca silencie mutações indiretas sob estado anterior de objetos.
+
 ## Regras Críticas e Filosofia
 
 ### 1. Segurança e Privacidade (A Regra de Ouro)
 
-- **Proteção de Dados Pessoais:** É ESTRITAMENTE PROIBIDO colocar CPFs, senhas ou qualquer dado sensível hardcoded no código fonte.
-- **Uso do .env:** O CPF utilizado para chamadas de End-to-End (`e2e`) deve ser lido exclusivamente de um arquivo `.env` local.
-- **Isolamento:** O arquivo `.env` deve estar explicitamente declarado no `.gitignore`. Segredos de produção devem ser guardados no painel de ambiente da Vercel.
+- **Zero Segredos Hardcoded:** É ESTRITAMENTE PROIBIDO lançar chaves de API, senhas ou CPFs no código-fonte.
+- **Uso do .env Segregrado:** Todos os segredos necessários e tokens de CPF local para tarefas (`e2e`) devem ser requeridos via Variáveis de Ambiente local e em Produção (Vercel Variables).
+- **Git Ignore Blindado:** O arquivo `.env` jamais deve ser submetido globalmente ou comitável. Rotações devem ocorrer de imediato no pingo de vazamentos indesejados.
 
-### 2. Padrão de Arquitetura e Estrutura
+### 2. Estilo de Codificação e Código Limpo
 
-- **FastAPI Standards:** Utilização extensiva do Pydantic para validação de requests/responses, gerando o Schema OpenAPI (Swagger) automaticamente.
-- **Clean e Procedural Scraper:** A lógica de raspagem (`scraper.py`) deve continuar tratável e não ser misturada com a camada de transporte (`api.py`).
-- **Gerenciamento Unificado:** Dependências empacotadas de forma moderna através do gerenciador de pacotes `uv` através de `pyproject.toml`.
+- **Imutabilidade Prática (Crítico):** Nas operações de regex e web-scraper, preserve a legibilidade da transformação produzindo novas sub-listas de dicíonarios não afetando estado-global da máquina.
+- **Limites Físicos de Arquivos:** Mantenha coesão em pedaços leves. Funções com escopos limpos (`< 50` linhas) sem aninhamento condicional cego (> 4 andares).
+- **Tratamento de Exceções:** Erros de Parsing do BeautifulSoup ou Timeout devem ser interceptados visivelmente pela retaguarda, jamais camuflados, para entregar resiliência ao FastAPI do topo.
 
-### 3. Estratégia de Testes (TDD & E2E)
+### 3. Padrão de Arquitetura e API REST
 
-Para evitar bloqueios de IP e garantir estabilidade, temos camadas de testes:
+- **FastAPI / Swagger Standards:** Utilização irrestrita da tipagem Pydantic baseada a esquemas. Entregue um OpenAPI Swagger transparente que é fiel espelho da infraestrutura interna como forma de validar as bordas do sistema.
+- **Divisão de Domínio:** A lógica braçal de transporte HTTP Client e conversores Regex (`scraper.py`) jamais colide em escopo de manipulação com pacotes do web framework Endpoints (`api.py`). Toda comunicação intermodular usa Pydantic Models transicionais.
+- **Gerenciamento Unificado:** Dependências empacotadas estaticamente via sistema `uv`.
 
-- **Unitários (Mocked):** Validação estrita do parser sobre HTML offline sem disparos HTTP para o IFS (uso via `pytest`).
-- **Testes E2E (Integração Plena):** Marcados como `@pytest.mark.e2e`. Rodam o ciclo completo HTTP do Sispubli em tempo real, exigindo o `CPF_TESTE` no `.env`.
-- **Cobertura Mínima:** Evite submissões que reduzam a cobertura coberta pelo `pytest-cov`. A meta é 80%+.
+### 4. Estratégia de Testes (TDD & E2E)
 
-### 4. Fluxo Git, DX e Observabilidade
+Para blindar infraestrutura IP num site federeal governamental frágil, aplique de forma assertiva:
 
-- **Logs Estruturados:** Utilização do `loguru` globalmente para debugging padronizado (com output visível para Vercel).
-- **Conventional Commits:** Todas as mensagens devem seguir a padronização (`feat:`, `fix:`, `docs:`, `test:`, `chore:`).
-- **Ferramental Local:** Uso obrigatório do `Makefile` para rotinas diárias (lint, format, test, run). O linter preferido é o `Ruff`.
+- **Testes Unitários (Offline Core):** Simulações limpas sem ir a internet via mocks providos de recortes HTML base para testar isoladamente seu extrator BeautifulSoup e suas expressões regulares.
+- **Testes E2E (Integração Plena):** Interligados pela flag `@pytest.mark.e2e`. Transacionarão com CPF real do `.env`. Pule suavemente essa etapa no CI base em caso da falta do `SECRET` no container.
+- Cobertura obrigatória mensurada via `pytest-cov > 80%`.
+
+### 5. Fluxo Git, DX e Observabilidade
+
+- **Logs Premium:** Esqueça *prints()* nativos. Subverta a operação por `logger` customizado via biblioteca **Loguru**. Abuse de `f-strings` para injetar instâncias dinâmicas e limpas nos rastros das maquinas de forma robusta e assimilável pelo deploy de Vercel.
+- **Conventional Commits:** Assinaturas obrigatórias: `feat:`, `fix:`, `docs:`, `test:`, `chore:`. (E analise todo o quadro antes de commítar).
+- **Ferramental Local:** Todo o enquadramento de formato diário invoca `Ruff`, roteado elegantemente pelo `Makefile`.
 
 ## Estrutura de Diretórios Atual
 
