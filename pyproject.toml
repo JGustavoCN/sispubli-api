@@ -1,0 +1,65 @@
+[project]
+name = "sispubli-api"
+version = "0.1.0"
+description = "API REST para extracao de certificados do sistema Sispubli/IFS"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "beautifulsoup4>=4.14.3",
+    "fastapi>=0.135.3",
+    "pydantic>=2.13.0",
+    "python-dotenv>=1.2.2",
+    "requests>=2.33.1",
+    "uvicorn>=0.44.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pre-commit>=4.5.1",
+    "pytest>=9.0.3",
+    "ruff>=0.15.10",
+]
+
+# =============================================================================
+# Ruff — Linter + Formatter (substitui flake8 + black)
+# =============================================================================
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort (ordenacao de imports)
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "S",    # flake8-bandit (seguranca)
+]
+ignore = [
+    "S101",  # assert em testes e OK
+    "S303",  # hashlib MD5 em contexto nao-criptografico e OK
+    "S324",  # hashlib MD5 usado para fingerprinting, nao criptografia
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105"]  # Permitir asserts e tokens hardcoded em testes
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# =============================================================================
+# Pytest — Configuracao de testes
+# =============================================================================
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

@@ -1,0 +1,41 @@
+# Git
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# Testes e qualidade
+tests/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+
+# IDE e editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Configuração local
+.env
+.env.*
+.editorconfig
+.pre-commit-config.yaml
+
+# Documentação e agente
+.agent/
+.gemini/
+*.md
+Makefile
+
+# Dados temporários
+temp/
+data/

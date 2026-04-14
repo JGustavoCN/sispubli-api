@@ -14,11 +14,66 @@ Respostas seguem o padrao:
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from logger import get_logger
 from scraper import fetch_all_certificates
 
 log = get_logger(__name__)
+
+
+# ===========================================================================
+# Modelos Pydantic — Tipagem das respostas para Swagger/OpenAPI
+# ===========================================================================
+
+
+class CertificadoItem(BaseModel):
+    """Representa um certificado individual."""
+
+    id_unico: str = Field(..., description="Hash MD5 unico do certificado")
+    titulo: str = Field(..., description="Titulo do certificado")
+    url: str | None = Field(None, description="URL para download/visualizacao")
+
+
+class CertificadosResult(BaseModel):
+    """Resultado da busca de certificados."""
+
+    usuario_id: str = Field(..., description="CPF mascarado do titular")
+    total: int = Field(..., description="Quantidade total de certificados")
+    certificados: list[CertificadoItem] = Field(
+        default_factory=list,
+        description="Lista de certificados encontrados",
+    )
+
+
+class CertificadosResponse(BaseModel):
+    """Envelope de resposta de sucesso."""
+
+    data: CertificadosResult
+
+
+class ErrorDetail(BaseModel):
+    """Detalhe de erro padronizado."""
+
+    code: str = Field(..., description="Codigo do erro (ex: invalid_cpf)")
+    message: str = Field(..., description="Mensagem descritiva do erro")
+
+
+class ErrorResponse(BaseModel):
+    """Envelope de resposta de erro."""
+
+    error: ErrorDetail
+
+
+class HealthResponse(BaseModel):
+    """Resposta do health check."""
+
+    status: str = Field(..., description="Status da API")
+
+
+# ===========================================================================
+# App FastAPI
+# ===========================================================================
 
 app = FastAPI(
     title="Sispubli Certificados API",
@@ -48,14 +103,22 @@ def _is_upstream_error(message: str) -> bool:
 # ===================================================================
 
 
-@app.get("/")
+@app.get("/", response_model=HealthResponse)
 def health_check():
     """Rota de verificacao de saude da API."""
     log.info("Health check acessado")
     return {"status": "API do Sispubli rodando"}
 
 
-@app.get("/api/certificados/{cpf}")
+@app.get(
+    "/api/certificados/{cpf}",
+    response_model=CertificadosResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "CPF invalido"},
+        502: {"model": ErrorResponse, "description": "Sispubli fora do ar"},
+        500: {"model": ErrorResponse, "description": "Erro interno"},
+    },
+)
 def buscar_certificados(cpf: str):
     """Busca todos os certificados disponiveis para um CPF.
 
