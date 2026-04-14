@@ -37,9 +37,12 @@ class TestPydanticSerialization:
             "total": 1,
             "certificados": [
                 {
-                    "id_unico": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+                    "id_unico": "a" * 64,  # 64 chars SHA-256
                     "titulo": "Participacao no(a) Evento Teste 2024",
-                    "url": "http://intranet.ifs.edu.br/publicacoes/relat/cert.wsp?x=1",
+                    "url_download": "http://intranet.ifs.edu.br/publicacoes/relat/cert.wsp?tmp.tx_cpf={cpf}&x=1",
+                    "ano": 2024,
+                    "tipo_codigo": 1,
+                    "tipo_descricao": "Participacao",
                 }
             ],
         }
@@ -47,23 +50,30 @@ class TestPydanticSerialization:
         response = client.get("/api/certificados/12345678900")
         data = response.json()
 
+        assert response.status_code == 200
         cert = data["data"]["certificados"][0]
         assert isinstance(cert["id_unico"], str)
         assert isinstance(cert["titulo"], str)
-        assert isinstance(cert["url"], str)
-        assert len(cert["id_unico"]) == 32  # MD5 hex
+        assert isinstance(cert["url_download"], str)
+        assert isinstance(cert["ano"], int)
+        assert isinstance(cert["tipo_codigo"], int)
+        assert isinstance(cert["tipo_descricao"], str)
+        assert len(cert["id_unico"]) == 64  # SHA-256 hex
 
     @patch("api.fetch_all_certificates")
     def test_url_nula_serializada_corretamente(self, mock_fetch):
-        """Certificado com url=None deve serializar como null no JSON."""
+        """Certificado com url_download=None deve serializar como null no JSON."""
         mock_fetch.return_value = {
             "usuario_id": "***.111.222-**",
             "total": 1,
             "certificados": [
                 {
-                    "id_unico": "deadbeefdeadbeefdeadbeefdeadbeef",
+                    "id_unico": "d" * 64,
                     "titulo": "Certificado Sem URL",
-                    "url": None,
+                    "url_download": None,
+                    "ano": 2021,
+                    "tipo_codigo": 6,
+                    "tipo_descricao": "Certificado Interno",
                 }
             ],
         }
@@ -72,7 +82,7 @@ class TestPydanticSerialization:
         data = response.json()
 
         cert = data["data"]["certificados"][0]
-        assert cert["url"] is None
+        assert cert["url_download"] is None
 
     @patch("api.fetch_all_certificates")
     def test_lista_vazia_de_certificados(self, mock_fetch):
@@ -99,19 +109,28 @@ class TestPydanticSerialization:
             "total": 3,
             "certificados": [
                 {
-                    "id_unico": "aaaa1111bbbb2222cccc3333dddd4444",
+                    "id_unico": "a" * 64,
                     "titulo": "Participacao no(a) Evento A",
-                    "url": "http://example.com/cert1",
+                    "url_download": "http://example.com/cert1?tmp.tx_cpf={cpf}",
+                    "ano": 2023,
+                    "tipo_codigo": 1,
+                    "tipo_descricao": "Participacao",
                 },
                 {
-                    "id_unico": "eeee5555ffff6666aaaa7777bbbb8888",
+                    "id_unico": "b" * 64,
                     "titulo": "Autor no(a) Evento B",
-                    "url": "http://example.com/cert2",
+                    "url_download": "http://example.com/cert2?tmp.tx_cpf={cpf}",
+                    "ano": 2023,
+                    "tipo_codigo": 2,
+                    "tipo_descricao": "Autor",
                 },
                 {
-                    "id_unico": "cccc9999dddd0000eeee1111ffff2222",
+                    "id_unico": "c" * 64,
                     "titulo": "Avaliador no(a) Programa C",
-                    "url": None,
+                    "url_download": None,
+                    "ano": 2022,
+                    "tipo_codigo": 6,
+                    "tipo_descricao": "Certificado Interno",
                 },
             ],
         }
@@ -123,9 +142,17 @@ class TestPydanticSerialization:
         assert data["data"]["total"] == 3
         assert len(data["data"]["certificados"]) == 3
 
-        # Verificar que cada certificado tem todas as chaves
+        # Verificar que cada certificado tem todas as chaves esperadas
+        chaves_esperadas = {
+            "id_unico",
+            "titulo",
+            "url_download",
+            "ano",
+            "tipo_codigo",
+            "tipo_descricao",
+        }
         for cert in data["data"]["certificados"]:
-            assert set(cert.keys()) == {"id_unico", "titulo", "url"}
+            assert set(cert.keys()) == chaves_esperadas
 
 
 # ===================================================================
