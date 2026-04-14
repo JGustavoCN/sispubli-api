@@ -91,15 +91,15 @@ class TestSispubliReal:
             # Chaves obrigatorias
             assert "id_unico" in cert, f"Campo 'id_unico' ausente em: {cert}"
             assert "titulo" in cert, f"Campo 'titulo' ausente em: {cert}"
-            assert "url" in cert, f"Campo 'url' ausente em: {cert}"
+            assert "url_download" in cert, f"Campo 'url_download' ausente em: {cert}"
 
             # Tipos
             assert isinstance(cert["id_unico"], str)
-            assert len(cert["id_unico"]) == 32  # MD5 hex
+            assert len(cert["id_unico"]) == 64  # SHA-256 hex
             assert isinstance(cert["titulo"], str)
             assert len(cert["titulo"]) > 0
 
             # URL pode ser None ou string valida
-            if cert["url"] is not None:
-                assert isinstance(cert["url"], str)
-                assert cert["url"].startswith("http")
+            if cert["url_download"] is not None:
+                assert isinstance(cert["url_download"], str)
+                assert cert["url_download"].startswith("http")
