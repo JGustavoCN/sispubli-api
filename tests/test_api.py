@@ -56,9 +56,12 @@ class TestCertificadosHappyPath:
             "total": 1,
             "certificados": [
                 {
-                    "id_unico": "abc123def456abc123def456abc123de",
+                    "id_unico": "abc123def456abc123def456abc123de" * 2,  # 64 chars SHA-256
                     "titulo": "Participacao no(a) Evento Teste 2024",
-                    "url": "http://intranet.ifs.edu.br/publicacoes/relat/cert.wsp?x=1",
+                    "url_download": "http://intranet.ifs.edu.br/publicacoes/relat/cert.wsp?tmp.tx_cpf={cpf}&x=1",
+                    "ano": 2024,
+                    "tipo_codigo": 1,
+                    "tipo_descricao": "Participacao",
                 }
             ],
         }

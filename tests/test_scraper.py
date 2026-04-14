@@ -1,18 +1,20 @@
 """
-Testes do Scraper Sispubli — Refatoracao Profunda.
+Testes do Scraper Sispubli — Milestone 1: Seguranca e Enriquecimento.
 
 Cobertura:
     - mask_cpf: mascaramento de CPF
-    - generate_cert_id: hash MD5 deterministico
-    - montar_url: montagem de URL por tipo (1-11 + fallback)
+    - generate_cert_id: hash SHA-256 + SALT deterministico (64 chars)
+    - montar_url: URL Template com {cpf} por tipo (1-11 + fallback)
     - extract_next_offset: deteccao de paginacao no HTML
-    - fetch_all_certificates: motor iterativo com paginacao mockada
-    - Estrutura de retorno dict/JSON
+    - fetch_all_certificates: motor iterativo com paginacao e cache
+    - Campos enriquecidos: ano, tipo_codigo, tipo_descricao
+    - Seguranca: CPF nao aparece em texto claro nas urls retornadas
 """
 
 from unittest.mock import MagicMock, patch
 
 from scraper import (
+    TIPO_DESCRICAO_MAP,
     extract_data,
     extract_next_offset,
     fetch_all_certificates,
@@ -127,12 +129,12 @@ class TestMaskCpf:
 
 
 # ===================================================================
-# TESTES UNITARIOS: generate_cert_id
+# TESTES UNITARIOS: generate_cert_id (SHA-256 + SALT)
 # ===================================================================
 
 
 class TestGenerateCertId:
-    """Testes para geracao de ID unico via hash MD5."""
+    """Testes para geracao de ID unico via hash SHA-256 com SALT."""
 
     def test_hash_deterministico(self):
         """Mesmos parametros devem gerar o mesmo hash."""
@@ -146,46 +148,63 @@ class TestGenerateCertId:
         h2 = generate_cert_id("12345678900", "1", "100", "201")
         assert h1 != h2
 
-    def test_hash_formato_md5(self):
-        """Hash deve ter 32 caracteres hexadecimais."""
+    def test_hash_formato_sha256(self):
+        """Hash deve ter 64 caracteres hexadecimais (SHA-256)."""
         h = generate_cert_id("12345678900", "1", "100", "200")
-        assert len(h) == 32
+        assert len(h) == 64
         assert all(c in "0123456789abcdef" for c in h)
+
+    def test_hash_diferente_sem_salt(self):
+        """Hash com SALT deve diferir de um hash sem SALT para os mesmos dados.
+
+        Garante que o SALT esta sendo efetivamente aplicado.
+        """
+        import hashlib
+
+        raw_sem_salt = "12345678900" + "1" + "100" + "200"
+        hash_sem_salt = hashlib.sha256(raw_sem_salt.encode()).hexdigest()
+        hash_com_salt = generate_cert_id("12345678900", "1", "100", "200")
+        # Podem ser iguais apenas se HASH_SALT for vazio — o que nao deve ocorrer
+        # Em ambiente de teste, o SALT padrao e "chave_secreta_padrao"
+        assert hash_com_salt != hash_sem_salt
 
 
 # ===================================================================
-# TESTES UNITARIOS: montar_url
+# TESTES UNITARIOS: montar_url (URL Template)
 # ===================================================================
 
 
 class TestMontarUrl:
-    """Testes para montagem de URL de certificado por tipo."""
+    """Testes para montagem de URL Template (sem CPF real)."""
 
     def test_tipo_1_participacao(self):
-        """Tipo 1: certificado de participacao."""
+        """Tipo 1: URL template com {cpf}, sem CPF real."""
         params = ["12345678900", "1", "100", "200", "0", "2024", "0"]
         url = montar_url(params)
         assert url is not None
         assert "certificado_participacao_process.wsp" in url
-        assert "tmp.tx_cpf=12345678900" in url
+        assert "tmp.tx_cpf={cpf}" in url
+        assert "12345678900" not in url  # CPF real nao deve aparecer
         assert "tmp.id_programa=100" in url
         assert "tmp.id_edicao=200" in url
 
     def test_tipo_2_autor(self):
-        """Tipo 2: certificado de autor."""
+        """Tipo 2: URL template de autor com {cpf}."""
         params = ["12345678900", "2", "300", "400", "0", "2024", "0"]
         url = montar_url(params)
         assert url is not None
         assert "certificado_autor_process.wsp" in url
-        assert "tmp.tx_cpf=12345678900" in url
+        assert "tmp.tx_cpf={cpf}" in url
+        assert "12345678900" not in url
 
     def test_tipo_3_sub_evento(self):
-        """Tipo 3: certificado de participacao em sub-evento."""
+        """Tipo 3: URL template de participacao em sub-evento."""
         params = ["12345678900", "3", "100", "200", "55", "2024", "0"]
         url = montar_url(params)
         assert url is not None
         assert "certificado_participacao_sub_evento_process.wsp" in url
         assert "tmp.id_sub_evento=55" in url
+        assert "tmp.tx_cpf={cpf}" in url
 
     def test_tipo_4_avaliacao(self):
         """Tipo 4: certificado de avaliacao."""
@@ -193,6 +212,7 @@ class TestMontarUrl:
         url = montar_url(params)
         assert url is not None
         assert "certificado_avaliacao_process.wsp" in url
+        assert "tmp.tx_cpf={cpf}" in url
 
     def test_tipo_5_avaliacao_programa(self):
         """Tipo 5: certificado de avaliacao de programa."""
@@ -202,21 +222,23 @@ class TestMontarUrl:
         assert "certificado_avaliacao_programa_process.wsp" in url
 
     def test_tipo_6_gerado_internamente(self):
-        """Tipo 6: certificado gerado internamente (usa id_artigo)."""
+        """Tipo 6: certificado interno — usa id_artigo, sem CPF na URL."""
         params = ["12345678900", "6", "100", "200", "0", "2024", "99"]
         url = montar_url(params)
         assert url is not None
         assert "certificado_process.wsp" in url
         assert "tmp.id=99" in url
         assert "tmp.id_programa=100" in url
+        assert "12345678900" not in url
 
     def test_tipo_7_orientador(self):
-        """Tipo 7: certificado de orientacao."""
+        """Tipo 7: certificado de orientacao com {cpf}."""
         params = ["12345678900", "7", "100", "200", "0", "2024", "88"]
         url = montar_url(params)
         assert url is not None
         assert "certificado_orientador_process.wsp" in url
         assert "tmp.id_artigo=88" in url
+        assert "tmp.tx_cpf={cpf}" in url
 
     def test_tipo_8_aluno_voluntario(self):
         """Tipo 8: certificado de aluno voluntario."""
@@ -225,6 +247,7 @@ class TestMontarUrl:
         assert url is not None
         assert "certificado_aluno_voluntario_process.wsp" in url
         assert "tmp.id_artigo=77" in url
+        assert "tmp.tx_cpf={cpf}" in url
 
     def test_tipo_9_aluno_bolsista(self):
         """Tipo 9: certificado de aluno bolsista."""
@@ -235,26 +258,39 @@ class TestMontarUrl:
         assert "tmp.id_artigo=66" in url
 
     def test_tipo_10_ministrante_sub_evento(self):
-        """Tipo 10: certificado de ministrante em sub-evento."""
+        """Tipo 10: nao usa CPF na URL."""
         params = ["12345678900", "10", "100", "200", "55", "2024", "0"]
         url = montar_url(params)
         assert url is not None
         assert "certificado_ministrante_sub_evento_process.wsp" in url
         assert "tmp.id_sub_evento=55" in url
+        assert "12345678900" not in url
 
     def test_tipo_11_coorientador(self):
-        """Tipo 11: certificado de coorientacao."""
+        """Tipo 11: certificado de coorientacao com {cpf}."""
         params = ["12345678900", "11", "100", "200", "0", "2024", "44"]
         url = montar_url(params)
         assert url is not None
         assert "certificado_coorientador_process.wsp" in url
         assert "tmp.id_artigo=44" in url
+        assert "tmp.tx_cpf={cpf}" in url
 
     def test_tipo_desconhecido_retorna_none(self):
         """Tipo nao mapeado deve retornar None."""
         params = ["12345678900", "99", "100", "200", "0", "2024", "0"]
         url = montar_url(params)
         assert url is None
+
+    def test_url_usa_template_cpf(self):
+        """SEGURANCA: todas as URLs que referenciam CPF devem usar {cpf}, nao o CPF real."""
+        cpf_real = "12345678900"
+        for tipo in ["1", "2", "3", "4", "5", "7", "8", "9", "11"]:
+            params = [cpf_real, tipo, "100", "200", "55", "2024", "88"]
+            url = montar_url(params)
+            assert url is not None, f"URL nao gerada para tipo {tipo}"
+            assert cpf_real not in url, f"CPF real encontrado na URL do tipo {tipo}: {url}"
+            if "tmp.tx_cpf" in url:
+                assert "{cpf}" in url, f"Template {{cpf}} ausente na URL do tipo {tipo}"
 
 
 # ===================================================================
@@ -289,6 +325,14 @@ class TestExtractNextOffset:
 class TestFetchAllCertificates:
     """Testes do motor iterativo com paginacao mockada."""
 
+    def setup_method(self):
+        """Limpa o cache antes de cada teste para isolamento."""
+        fetch_all_certificates.cache_clear()
+
+    def teardown_method(self):
+        """Limpa o cache apos cada teste."""
+        fetch_all_certificates.cache_clear()
+
     @patch("scraper.requests.Session")
     def test_pagination_two_pages(self, mock_session_class):
         """Simula 2 paginas: pagina 1 com 'Proximo', pagina 2 sem.
@@ -297,13 +341,11 @@ class TestFetchAllCertificates:
         mock_session = MagicMock()
         mock_session_class.return_value = mock_session
 
-        # GET inicial retorna pagina com token
         mock_get_response = MagicMock()
         mock_get_response.status_code = 200
         mock_get_response.text = MOCK_PAGE_INITIAL
         mock_session.get.return_value = mock_get_response
 
-        # POST side_effect: pagina 1 (com nav_go) -> pagina 2 (sem nav_go)
         mock_post_response_1 = MagicMock()
         mock_post_response_1.status_code = 200
         mock_post_response_1.text = MOCK_PAGE_1
@@ -319,25 +361,24 @@ class TestFetchAllCertificates:
 
         result = fetch_all_certificates("12345678900")
 
-        # Validacoes
         assert result["usuario_id"] == "***.456.789-**"
         assert result["total"] == 2
         assert len(result["certificados"]) == 2
-
-        # Verificar que foram feitos exatamente 2 POSTs
         assert mock_session.post.call_count == 2
 
-        # Verificar titulos
         titulos = [c["titulo"] for c in result["certificados"]]
         assert "Participacao no(a) Evento Alpha 2024" in titulos
         assert "Participacao no(a) Evento Beta 2024" in titulos
 
-        # Verificar que cada certificado tem as chaves corretas
         for cert in result["certificados"]:
             assert "id_unico" in cert
             assert "titulo" in cert
-            assert "url" in cert
-            assert len(cert["id_unico"]) == 32  # MD5
+            assert "url_download" in cert
+            assert "ano" in cert
+            assert "tipo_codigo" in cert
+            assert "tipo_descricao" in cert
+            # SHA-256 = 64 chars
+            assert len(cert["id_unico"]) == 64
 
     @patch("scraper.requests.Session")
     def test_single_page_no_pagination(self, mock_session_class):
@@ -347,13 +388,11 @@ class TestFetchAllCertificates:
         mock_session = MagicMock()
         mock_session_class.return_value = mock_session
 
-        # GET inicial
         mock_get_response = MagicMock()
         mock_get_response.status_code = 200
         mock_get_response.text = MOCK_PAGE_INITIAL
         mock_session.get.return_value = mock_get_response
 
-        # POST unico: pagina sem nav_go
         mock_post_response = MagicMock()
         mock_post_response.status_code = 200
         mock_post_response.text = MOCK_PAGE_2
@@ -364,6 +403,77 @@ class TestFetchAllCertificates:
         assert result["total"] == 1
         assert mock_session.post.call_count == 1
 
+    @patch("scraper.requests.Session")
+    def test_campos_enriquecidos(self, mock_session_class):
+        """Valida campos de enriquecimento: ano, tipo_codigo, tipo_descricao."""
+        mock_session = MagicMock()
+        mock_session_class.return_value = mock_session
+
+        mock_get = MagicMock()
+        mock_get.status_code = 200
+        mock_get.text = MOCK_PAGE_INITIAL
+        mock_session.get.return_value = mock_get
+
+        mock_post = MagicMock()
+        mock_post.status_code = 200
+        mock_post.text = MOCK_PAGE_1  # tipo=1, ano=2024
+        mock_session.post.return_value = mock_post
+
+        result = fetch_all_certificates("12345678900")
+
+        assert result["total"] >= 1
+        cert = result["certificados"][0]
+
+        assert cert["ano"] == 2024
+        assert cert["tipo_codigo"] == 1
+        assert cert["tipo_descricao"] == "Participacao"
+
+    @patch("scraper.requests.Session")
+    def test_url_download_usa_template(self, mock_session_class):
+        """SEGURANCA: url_download nao deve conter o CPF real."""
+        mock_session = MagicMock()
+        mock_session_class.return_value = mock_session
+
+        mock_get = MagicMock()
+        mock_get.status_code = 200
+        mock_get.text = MOCK_PAGE_INITIAL
+        mock_session.get.return_value = mock_get
+
+        mock_post = MagicMock()
+        mock_post.status_code = 200
+        mock_post.text = MOCK_PAGE_1
+        mock_session.post.return_value = mock_post
+
+        result = fetch_all_certificates("12345678900")
+
+        for cert in result["certificados"]:
+            if cert["url_download"]:
+                assert "12345678900" not in cert["url_download"], (
+                    f"CPF real encontrado na url_download: {cert['url_download']}"
+                )
+
+    @patch("scraper.requests.Session")
+    def test_lru_cache_reutiliza_resultado(self, mock_session_class):
+        """lru_cache: segunda chamada com mesmo CPF nao bate no Sispubli."""
+        mock_session = MagicMock()
+        mock_session_class.return_value = mock_session
+
+        mock_get = MagicMock()
+        mock_get.status_code = 200
+        mock_get.text = MOCK_PAGE_INITIAL
+        mock_session.get.return_value = mock_get
+
+        mock_post = MagicMock()
+        mock_post.status_code = 200
+        mock_post.text = MOCK_PAGE_2
+        mock_session.post.return_value = mock_post
+
+        result1 = fetch_all_certificates("99988877766")
+        result2 = fetch_all_certificates("99988877766")
+
+        assert result1 is result2  # mesmo objeto em memoria (cache hit)
+        assert mock_session.get.call_count == 1  # GET feito apenas uma vez
+
 
 # ===================================================================
 # TESTES DE ESTRUTURA DE RETORNO
@@ -372,6 +482,12 @@ class TestFetchAllCertificates:
 
 class TestResultStructure:
     """Valida a estrutura completa do dicionario de retorno."""
+
+    def setup_method(self):
+        fetch_all_certificates.cache_clear()
+
+    def teardown_method(self):
+        fetch_all_certificates.cache_clear()
 
     @patch("scraper.requests.Session")
     def test_chaves_obrigatorias(self, mock_session_class):
@@ -391,22 +507,51 @@ class TestResultStructure:
 
         result = fetch_all_certificates("12345678900")
 
-        # Chaves de nivel superior
         assert "usuario_id" in result
         assert "total" in result
         assert "certificados" in result
 
-        # Tipo dos valores
         assert isinstance(result["usuario_id"], str)
         assert isinstance(result["total"], int)
         assert isinstance(result["certificados"], list)
 
-        # Estrutura de cada certificado
         for cert in result["certificados"]:
             assert isinstance(cert, dict)
             assert "id_unico" in cert
             assert "titulo" in cert
-            assert "url" in cert
+            assert "url_download" in cert
+            assert "ano" in cert
+            assert "tipo_codigo" in cert
+            assert "tipo_descricao" in cert
+
+
+# ===================================================================
+# TESTES: TIPO_DESCRICAO_MAP
+# ===================================================================
+
+
+class TestTipoDescricaoMap:
+    """Valida o mapeamento de codigos para descricoes."""
+
+    def test_tipos_conhecidos(self):
+        """Tipos de 1 a 11 devem ter descricao mapeada."""
+        tipos_esperados = {
+            "1": "Participacao",
+            "2": "Autor",
+            "3": "Mini-Curso",
+            "4": "Avaliacao",
+            "7": "Orientacao",
+            "11": "Coorientacao",
+        }
+        for codigo, descricao in tipos_esperados.items():
+            assert TIPO_DESCRICAO_MAP[codigo] == descricao
+
+    def test_cobertura_completa_tipos(self):
+        """Todos os tipos mapeados no URL_TYPE_MAP devem ter descricao."""
+        from scraper import URL_TYPE_MAP
+
+        for tipo in URL_TYPE_MAP:
+            assert tipo in TIPO_DESCRICAO_MAP, f"Tipo {tipo} sem descricao no TIPO_DESCRICAO_MAP"
 
 
 # ===================================================================

@@ -4,18 +4,27 @@ Scraper Sispubli — Motor Iterativo de Extracao de Certificados.
 Extrai todos os certificados de um CPF no sistema Sispubli do IFS,
 usando paginacao baseada em offsets via POST.
 
+Fluxo do CPF dentro do sistema:
+    1. CPF entra como parametro em fetch_all_certificates(cpf)
+    2. Usado no POST payload ao Sispubli (campo tmp.tx_cpf) — nunca logado em claro
+    3. Mascarado via mask_cpf() para qualquer log/observabilidade
+    4. Hasheado com SHA-256 + SALT para gerar id_unico (LGPD-compliant)
+    5. Substituido por "{cpf}" literal na url_download — cliente faz o replace
+    6. Nunca persiste no retorno final em texto claro
+
 Funcoes principais:
-    fetch_all_certificates(cpf) -> dict  [PONTO DE ENTRADA]
+    fetch_all_certificates(cpf) -> dict  [PONTO DE ENTRADA — lru_cache]
     extract_data(html) -> dict           [PARSING DE HTML]
     mask_cpf(cpf) -> str                 [ANONIMIZACAO]
-    generate_cert_id(cpf, tipo, prog, edic) -> str  [HASH MD5]
-    montar_url(params) -> str | None     [MONTAGEM DE URL]
+    generate_cert_id(cpf, tipo, prog, edic) -> str  [HASH SHA-256 + SALT]
+    montar_url(params) -> str | None     [MONTAGEM DE URL TEMPLATE]
     extract_next_offset(html) -> int | None  [DETECCAO DE PAGINACAO]
 """
 
 import hashlib
+import os
 import re
-import warnings
+from functools import lru_cache
 
 import requests
 from bs4 import BeautifulSoup
@@ -30,6 +39,28 @@ BASE_URL = "http://intranet.ifs.edu.br/publicacoes/relat"
 # Limite de seguranca para evitar loops infinitos na paginacao
 MAX_PAGES = 50
 
+# SALT para hashing LGPD-compliant. Deve ser definido via env em producao.
+# O Fail Fast em producao e feito pelo api.py no lifespan.
+HASH_SALT = os.environ.get("HASH_SALT", "chave_secreta_padrao")
+
+# ---------------------------------------------------------------------------
+# Mapeamento de codigo de tipo para descricao legivel
+# ---------------------------------------------------------------------------
+
+TIPO_DESCRICAO_MAP: dict[str, str] = {
+    "1": "Participacao",
+    "2": "Autor",
+    "3": "Mini-Curso",
+    "4": "Avaliacao",
+    "5": "Avaliacao de Programa",
+    "6": "Certificado Interno",
+    "7": "Orientacao",
+    "8": "Aluno Voluntario",
+    "9": "Aluno Bolsista",
+    "10": "Ministrante de Sub-Evento",
+    "11": "Coorientacao",
+}
+
 # ---------------------------------------------------------------------------
 # Mapeamento de tipos de certificado para endpoints
 # ---------------------------------------------------------------------------
@@ -37,30 +68,33 @@ MAX_PAGES = 50
 # Cada entrada: tipo -> (endpoint, funcao_que_monta_query_params)
 # Os params posicionais sao: [cpf, tipo, programa, edicao, sub_evento, ano, id_artigo]
 #                              [0]   [1]   [2]       [3]     [4]         [5]  [6]
+#
+# SEGURANCA (URL Template): p[0] (CPF real) e substituido por "{cpf}" literal.
+# O cliente (Flutter/MCP) e responsavel por dar o replace no momento do download.
 
 URL_TYPE_MAP = {
     "1": {
         "endpoint": "certificado_participacao_process.wsp",
-        "params_fn": lambda p: f"tmp.tx_cpf={p[0]}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}",
+        "params_fn": lambda p: f"tmp.tx_cpf={{cpf}}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}",
     },
     "2": {
         "endpoint": "certificado_autor_process.wsp",
-        "params_fn": lambda p: f"tmp.tx_cpf={p[0]}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}",
+        "params_fn": lambda p: f"tmp.tx_cpf={{cpf}}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}",
     },
     "3": {
         "endpoint": "certificado_participacao_sub_evento_process.wsp",
         "params_fn": lambda p: (
-            f"tmp.tx_cpf={p[0]}&tmp.id_programa={p[2]}"
+            f"tmp.tx_cpf={{cpf}}&tmp.id_programa={p[2]}"
             f"&tmp.id_edicao={p[3]}&tmp.id_sub_evento={p[4]}"
         ),
     },
     "4": {
         "endpoint": "certificado_avaliacao_process.wsp",
-        "params_fn": lambda p: f"tmp.tx_cpf={p[0]}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}",
+        "params_fn": lambda p: f"tmp.tx_cpf={{cpf}}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}",
     },
     "5": {
         "endpoint": "certificado_avaliacao_programa_process.wsp",
-        "params_fn": lambda p: f"tmp.tx_cpf={p[0]}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}",
+        "params_fn": lambda p: f"tmp.tx_cpf={{cpf}}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}",
     },
     "6": {
         "endpoint": "certificado_process.wsp",
@@ -69,16 +103,16 @@ URL_TYPE_MAP = {
     "7": {
         "endpoint": "certificado_orientador_process.wsp",
         "params_fn": lambda p: (
-            f"tmp.tx_cpf={p[0]}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}&tmp.id_artigo={p[6]}"
+            f"tmp.tx_cpf={{cpf}}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}&tmp.id_artigo={p[6]}"
         ),
     },
     "8": {
         "endpoint": "certificado_aluno_voluntario_process.wsp",
-        "params_fn": lambda p: f"tmp.tx_cpf={p[0]}&tmp.id_artigo={p[6]}",
+        "params_fn": lambda p: f"tmp.tx_cpf={{cpf}}&tmp.id_artigo={p[6]}",
     },
     "9": {
         "endpoint": "certificado_aluno_bolsista_process.wsp",
-        "params_fn": lambda p: f"tmp.tx_cpf={p[0]}&tmp.id_artigo={p[6]}",
+        "params_fn": lambda p: f"tmp.tx_cpf={{cpf}}&tmp.id_artigo={p[6]}",
     },
     "10": {
         "endpoint": "certificado_ministrante_sub_evento_process.wsp",
@@ -87,7 +121,7 @@ URL_TYPE_MAP = {
     "11": {
         "endpoint": "certificado_coorientador_process.wsp",
         "params_fn": lambda p: (
-            f"tmp.tx_cpf={p[0]}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}&tmp.id_artigo={p[6]}"
+            f"tmp.tx_cpf={{cpf}}&tmp.id_programa={p[2]}&tmp.id_edicao={p[3]}&tmp.id_artigo={p[6]}"
         ),
     },
 }
@@ -99,10 +133,11 @@ URL_TYPE_MAP = {
 
 
 def mask_cpf(cpf: str) -> str:
-    """Mascara um CPF para exibicao anonimizada.
+    """Mascara um CPF para exibicao anonimizada em logs.
 
     Formato: ***.XXX.XXX-**
     Onde X sao os digitos do meio (posicoes 3-8).
+    O CPF NUNCA deve aparecer em claro nos logs.
 
     Args:
         cpf: String numerica do CPF (11 digitos).
@@ -120,43 +155,49 @@ def mask_cpf(cpf: str) -> str:
 
 
 def generate_cert_id(cpf: str, tipo: str, programa: str, edicao: str) -> str:
-    """Gera um ID unico (hash MD5) para um certificado.
+    """Gera um ID unico (hash SHA-256 + SALT) para um certificado.
 
-    Concatena cpf+tipo+programa+edicao e gera o hash hexadecimal.
+    Concatena SALT+cpf+tipo+programa+edicao e gera o hash hexadecimal.
+    O uso de SALT garante conformidade LGPD: mesmo que o hash vaze,
+    a reversao para o CPF original e computacionalmente inviavel.
 
     Args:
-        cpf: CPF do titular.
+        cpf: CPF do titular (nunca exposto no retorno).
         tipo: Tipo do certificado (1-11).
         programa: ID do programa.
         edicao: ID da edicao.
 
     Returns:
-        String hexadecimal de 32 caracteres (MD5).
+        String hexadecimal de 64 caracteres (SHA-256).
     """
-    raw = f"{cpf}{tipo}{programa}{edicao}"
-    cert_hash = hashlib.md5(raw.encode("utf-8")).hexdigest()
+    raw = f"{HASH_SALT}{cpf}{tipo}{programa}{edicao}"
+    cert_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
     log.debug(
-        f"Hash gerado para [cpf={cpf[:3]}..., tipo={tipo},"
-        f" prog={programa}, edic={edicao}]: {cert_hash}"
+        f"Hash SHA-256 gerado para [cpf={mask_cpf(cpf)}, tipo={tipo},"
+        f" prog={programa}, edic={edicao}]: {cert_hash[:16]}..."
     )
     return cert_hash
 
 
 def montar_url(params: list) -> str | None:
-    """Monta a URL completa do certificado baseada no tipo.
+    """Monta a URL template do certificado baseada no tipo.
 
     Utiliza o mapeamento URL_TYPE_MAP para determinar o endpoint
     e os query params corretos para cada tipo de certificado.
+
+    SEGURANCA: A URL retornada contem "{cpf}" no lugar do CPF real.
+    O cliente (Flutter/MCP) deve executar url.replace("{cpf}", cpf_real)
+    antes de fazer o download.
 
     Args:
         params: Lista de parametros posicionais extraidos do JavaScript:
                 [cpf, tipo, programa, edicao, sub_evento, ano, id_artigo]
 
     Returns:
-        URL completa ou None se o tipo nao for mapeado.
+        URL template com {cpf} ou None se o tipo nao for mapeado.
     """
     if len(params) < 7:
-        log.error(f"Parametros insuficientes para montar URL: {params}")
+        log.error(f"Parametros insuficientes para montar URL: {len(params)} recebidos (min 7)")
         return None
 
     tipo = params[1]
@@ -169,7 +210,7 @@ def montar_url(params: list) -> str | None:
     endpoint = type_config["endpoint"]
     query_params = type_config["params_fn"](params)
     url = f"{BASE_URL}/{endpoint}?{query_params}"
-    log.debug(f"URL montada [tipo={tipo}]: {url}")
+    log.debug(f"URL template montada [tipo={tipo}]: {url}")
     return url
 
 
@@ -205,7 +246,7 @@ def extract_next_offset(html_content: str) -> int | None:
 
 
 # ===================================================================
-# FUNCAO DE PARSING (LEGADA — mantida para compatibilidade)
+# FUNCAO DE PARSING
 # ===================================================================
 
 
@@ -257,8 +298,22 @@ def extract_data(html_content: str) -> dict:
 # ===================================================================
 
 
+@lru_cache(maxsize=128)
 def fetch_all_certificates(cpf: str) -> dict:
     """Busca TODOS os certificados de um CPF, iterando por todas as paginas.
+
+    Resultado e cacheado em memoria (lru_cache) para evitar requisicoes
+    repetidas ao Sispubli para o mesmo CPF em um curto periodo.
+    Use fetch_all_certificates.cache_clear() para invalidar o cache.
+
+    RASTREIO DO CPF (fluxo de seguranca):
+        - Recebido como parametro (str de 11 digitos)
+        - Mascarado em todos os logs via mask_cpf()
+        - Enviado ao Sispubli apenas no payload POST (campo tmp.tx_cpf)
+        - Hasheado com SHA-256+SALT para gerar id_unico de cada cert
+        - Substituido por "{cpf}" nas urls_download (URL Template)
+        - Retornado mascarado em usuario_id
+        - NUNCA aparece em texto claro no retorno JSON
 
     Fluxo:
         1. GET inicial para obter token e cookies
@@ -273,7 +328,8 @@ def fetch_all_certificates(cpf: str) -> dict:
         Dict com:
             - usuario_id (str): CPF mascarado
             - total (int): quantidade total de certificados
-            - certificados (list): lista de dicts com id_unico, titulo, url
+            - certificados (list): lista de dicts com id_unico, titulo,
+              url_download, ano, tipo_codigo, tipo_descricao
 
     Raises:
         Exception: Se o acesso HTTP falhar ou token nao for encontrado.
@@ -302,7 +358,8 @@ def fetch_all_certificates(cpf: str) -> dict:
     log.info(f"[PASSO 1] Token obtido: {token[:8]}...")
 
     # --- Passo 2: POST inicial com CPF ---
-    log.info("[PASSO 2] POST inicial com CPF")
+    # CPF e enviado ao Sispubli como dado de sessao — nao e logado em claro
+    log.info("[PASSO 2] POST inicial com CPF (mascarado)")
     payload = {
         "wi.page.prev": "site/indexCertificados",
         "wi.token": token,
@@ -347,7 +404,7 @@ def fetch_all_certificates(cpf: str) -> dict:
         if page_data["token"]:
             token = page_data["token"]
 
-        # POST para proxima pagina
+        # POST para proxima pagina — CPF necessario para manter sessao
         payload_next = {
             "wi.page.prev": "site/indexCertificados",
             "wi.token": token,
@@ -375,22 +432,44 @@ def fetch_all_certificates(cpf: str) -> dict:
     certificados_finais = []
     for cert in all_certificates_raw:
         params = cert["params"]
+
+        # Posicoes: [cpf, tipo, programa, edicao, sub_evento, ano, id_artigo]
         cpf_cert = params[0] if len(params) > 0 else cpf
         tipo = params[1] if len(params) > 1 else "0"
         programa = params[2] if len(params) > 2 else "0"
         edicao = params[3] if len(params) > 3 else "0"
+        ano_raw = params[5] if len(params) > 5 else "0"
 
+        # Hash LGPD-compliant — CPF nunca aparece em claro no retorno
         cert_id = generate_cert_id(cpf_cert, tipo, programa, edicao)
+
+        # URL Template — cliente substitui {cpf} pelo CPF real no momento do download
         url = montar_url(params)
+
+        # Enriquecimento de dados
+        try:
+            ano = int(ano_raw)
+        except (ValueError, TypeError):
+            ano = 0
+            log.warning(f"Ano invalido para certificado '{cert['title']}': '{ano_raw}'")
+
+        tipo_codigo = int(tipo) if tipo.isdigit() else 0
+        tipo_descricao = TIPO_DESCRICAO_MAP.get(tipo, f"Tipo {tipo}")
 
         certificados_finais.append(
             {
                 "id_unico": cert_id,
                 "titulo": cert["title"],
-                "url": url,
+                "url_download": url,
+                "ano": ano,
+                "tipo_codigo": tipo_codigo,
+                "tipo_descricao": tipo_descricao,
             }
         )
-        log.debug(f"Certificado consolidado: id={cert_id[:8]} titulo={cert['title']}")
+        log.debug(
+            f"Certificado consolidado: id={cert_id[:16]}..."
+            f" titulo={cert['title'][:30]} ano={ano} tipo={tipo_descricao}"
+        )
 
     resultado = {
         "usuario_id": mask_cpf(cpf),
@@ -407,57 +486,12 @@ def fetch_all_certificates(cpf: str) -> dict:
 
 
 # ===================================================================
-# FUNCAO LEGADA (DEPRECADA)
-# ===================================================================
-
-
-def fetch_certificates(cpf: str) -> dict:
-    """[DEPRECADA] Use fetch_all_certificates() ao inves desta.
-
-    Mantida para compatibilidade. Busca apenas a primeira pagina.
-    """
-    warnings.warn(
-        "fetch_certificates() esta deprecada. Use fetch_all_certificates().",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    log.warning("Chamada a funcao deprecada fetch_certificates()")
-
-    session = requests.Session()
-
-    response_get = session.get(URL)
-    if response_get.status_code != 200:
-        raise Exception(f"Erro ao acessar pagina inicial: {response_get.status_code}")
-
-    initial_data = extract_data(response_get.text)
-    token = initial_data["token"]
-
-    if not token:
-        raise Exception("Token nao encontrado na pagina inicial")
-
-    payload = {
-        "wi.page.prev": "site/indexCertificados",
-        "wi.token": token,
-        "tmp.acao": "",
-        "tmp.params": "",
-        "tmp.tx_cpf": cpf,
-    }
-
-    response_post = session.post(URL, data=payload)
-    if response_post.status_code != 200:
-        raise Exception(f"Erro ao enviar POST: {response_post.status_code}")
-
-    return extract_data(response_post.text)
-
-
-# ===================================================================
 # PONTO DE ENTRADA CLI
 # ===================================================================
 
 
 if __name__ == "__main__":
     import json
-    import os
 
     from dotenv import load_dotenv
 
