@@ -16,10 +16,10 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from logger import get_logger
+from logger import logger
 from scraper import fetch_all_certificates
 
-log = get_logger(__name__)
+log = logger.bind(module=__name__)
 
 
 # ===========================================================================
@@ -134,11 +134,11 @@ def buscar_certificados(cpf: str):
         502: Sispubli fora do ar ou com erro.
         500: Erro inesperado interno.
     """
-    log.info("Requisicao recebida: GET /api/certificados/%s", cpf[:3] + "***")
+    log.info(f"Requisicao recebida: GET /api/certificados/{cpf[:3]}***")
 
     # --- Validacao do CPF ---
     if not cpf.isdigit() or len(cpf) != 11:
-        log.warning("CPF invalido recebido: '%s' (len=%d)", cpf[:3] + "...", len(cpf))
+        log.warning(f"CPF invalido recebido: '{cpf[:3]}...' (len={len(cpf)})")
         return JSONResponse(
             status_code=400,
             content={
@@ -153,12 +153,12 @@ def buscar_certificados(cpf: str):
     try:
         log.info("Iniciando busca de certificados para CPF valido")
         resultado = fetch_all_certificates(cpf)
-        log.info("Busca concluida: %d certificados encontrados", resultado["total"])
+        log.info(f"Busca concluida: {resultado['total']} certificados encontrados")
         return {"data": resultado}
 
     except Exception as e:
         error_message = str(e)
-        log.error("Erro durante busca de certificados: %s", error_message)
+        log.error(f"Erro durante busca de certificados: {error_message}")
 
         if _is_upstream_error(error_message):
             log.error("Classificado como erro de upstream (Sispubli)")

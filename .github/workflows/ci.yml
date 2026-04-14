@@ -1,0 +1,64 @@
+# =============================================================================
+# CI — Sispubli API
+# Lint (ruff) + Testes com Cobertura (pytest-cov)
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    name: Lint + Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: ["3.13"]
+
+    steps:
+      # ------------------------------------------------------------------
+      # 1. Checkout do codigo
+      # ------------------------------------------------------------------
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------
+      # 2. Instalar Python e uv
+      # ------------------------------------------------------------------
+      - name: Instalar Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # ------------------------------------------------------------------
+      # 3. Instalar dependencias
+      # ------------------------------------------------------------------
+      - name: Instalar dependencias
+        run: uv sync
+
+      # ------------------------------------------------------------------
+      # 4. Lint (ruff check + ruff format --check)
+      # ------------------------------------------------------------------
+      - name: Lint (ruff check)
+        run: uv run ruff check .
+
+      - name: Format check (ruff format)
+        run: uv run ruff format --check .
+
+      # ------------------------------------------------------------------
+      # 5. Testes com cobertura
+      # ------------------------------------------------------------------
+      - name: Testes + Cobertura
+        run: uv run pytest -v
+        env:
+          ENVIRONMENT: test

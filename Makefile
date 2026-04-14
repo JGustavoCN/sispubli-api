@@ -1,7 +1,7 @@
 # Makefile — Sispubli API
-# Gerenciador: uv | Linter/Formatter: ruff | Testes: pytest
+# Gerenciador: uv | Linter/Formatter: ruff | Testes: pytest + coverage
 
-.PHONY: help install format lint test test-v serve run \
+.PHONY: help install format lint test test-v test-e2e serve run \
         pre-commit docker-build docker-run clean check
 
 # Alvo padrão
@@ -14,8 +14,9 @@ help:
 	@echo "  make install      - Instala dependencias (uv sync)"
 	@echo "  make format       - Formata codigo (ruff format)"
 	@echo "  make lint         - Analise estatica (ruff check)"
-	@echo "  make test         - Executa testes (pytest)"
+	@echo "  make test         - Testes + cobertura (pytest-cov)"
 	@echo "  make test-v       - Testes verbose com logs"
+	@echo "  make test-e2e     - Testes E2E (Sispubli real)"
 	@echo "  make serve        - Sobe API REST (uvicorn --reload)"
 	@echo "  make run          - Executa scraper no terminal"
 	@echo "  make pre-commit   - Instala hooks de pre-commit"
@@ -35,10 +36,13 @@ lint:
 	uv run ruff check . --fix
 
 test:
-	uv run pytest -v --tb=short
+	uv run pytest -v
 
 test-v:
-	uv run pytest -v --tb=short --log-cli-level=INFO
+	uv run pytest -v --tb=long --log-cli-level=DEBUG
+
+test-e2e:
+	uv run pytest tests/e2e/ -v --tb=short -m e2e --no-header --override-ini="addopts="
 
 serve:
 	uv run uvicorn api:app --reload --host 0.0.0.0 --port 8000
