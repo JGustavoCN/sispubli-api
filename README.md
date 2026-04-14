@@ -44,15 +44,21 @@ make install
 
 ### 2. Configure Suas Variáveis de Ambiente
 
-Copie a variável base de autenticação para seu ambiente, criando um `.env` puro na raiz da pasta.
+Copie o arquivo de exemplo e preencha com seus dados locais:
+
+```bash
+cp .env.example .env
+```
 
 ```ini
 # .env
-CPF_TESTE=00000000000
+CPF_TESTE=00000000000   # Substitua pelo seu CPF real (apenas para testes E2E)
+HASH_SALT=seu_salt_secreto_aqui
 ```
 
 > [!CAUTION]
-> Ao longo do desenvolvimento de testes End-to-End (`e2e`), nunca insira o seu CPF diretamente no código-fonte. O log pode ficar guardado no repositório local permanentemente.
+> O CPF real é necessário **apenas** para testes E2E (`make test-e2e`). Para testes unitários (`make test`) e desenvolvimento local (`make serve`), nenhum CPF real é necessário.
+> **NUNCA** insira seu CPF diretamente no código-fonte. Use exclusivamente o `.env`.
 
 ### 3. Rodando o Servidor Localmente
 
