@@ -19,7 +19,9 @@ Respostas seguem o padrao:
     Erro:    {"error": {"code": "...", "message": "..."}}
 """
 
+import copy
 import os
+import re
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -27,11 +29,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from logger import logger
-from rate_limit import auth_limiter, extrair_ip_real
+from rate_limit import auth_limiter, extrair_ip_real, ip_limiter
 from scraper import fetch_all_certificates
 from security import (
     derivar_session_hash,
+    gerar_ticket_pdf,
     gerar_token_sessao,
+    ler_token_sessao,
     normalizar_cpf,
 )
 
@@ -311,6 +315,169 @@ async def auth_token(body: TokenRequest, request: Request):
 
     log.info(f"Token de sessao gerado com sucesso (hash: {session_hash[:16]}...)")
     return {"access_token": token, "session_hash": session_hash}
+
+
+# ===================================================================
+# ROTA: Listagem segura — GET /api/certificados
+# ===================================================================
+
+# Regex para limpar CPF de URLs e campos
+_CPF_PATTERN = re.compile(r"\b\d{11}\b")
+
+
+def _extrair_bearer_token(request: Request) -> str | None:
+    """Extrai o token do header Authorization: Bearer <token>."""
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return None
+    return auth_header[7:]  # Remove 'Bearer '
+
+
+def _substituir_urls_por_tickets(certificados: list[dict]) -> list[dict]:
+    """Substitui url_download por /api/pdf/{ticket} criptografados."""
+    resultado = []
+    for cert in certificados:
+        cert_copy = copy.deepcopy(cert)
+        url = cert_copy.get("url_download")
+        if url:
+            ticket = gerar_ticket_pdf(url)
+            cert_copy["url_download"] = f"/api/pdf/{ticket}"
+        resultado.append(cert_copy)
+    return resultado
+
+
+def _sanitizar_cpf_resposta(certificados: list[dict]) -> list[dict]:
+    """Remove qualquer CPF que ainda exista nos campos da resposta."""
+    resultado = []
+    for cert in certificados:
+        cert_limpo = {}
+        for key, value in cert.items():
+            if isinstance(value, str):
+                cert_limpo[key] = _CPF_PATTERN.sub("{cpf}", value)
+            else:
+                cert_limpo[key] = value
+        resultado.append(cert_limpo)
+    return resultado
+
+
+@app.get(
+    "/api/certificados",
+    response_model=CertificadosResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Nao autenticado"},
+        400: {"model": ErrorResponse, "description": "Token invalido"},
+        502: {"model": ErrorResponse, "description": "Sispubli fora do ar"},
+    },
+)
+async def listar_certificados(request: Request):
+    """Lista certificados do usuario autenticado via Bearer token.
+
+    O CPF e descriptografado do token, enviado ao scraper, e as URLs
+    resultantes sao substituidas por tickets criptografados (/api/pdf/{ticket}).
+    Nenhum CPF real aparece na resposta.
+
+    Args:
+        request: Starlette Request com header Authorization: Bearer <token>.
+
+    Returns:
+        JSON com {data: {usuario_id, total, certificados}}.
+    """
+    # --- Extrair token ---
+    raw_token = _extrair_bearer_token(request)
+    if raw_token is None:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "error": {
+                    "code": "unauthorized",
+                    "message": "Header Authorization: Bearer <token> obrigatorio.",
+                }
+            },
+        )
+
+    # --- Validar tamanho ---
+    if len(raw_token) > 500:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "code": "token_too_large",
+                    "message": "Token excede tamanho maximo de 500 caracteres.",
+                }
+            },
+        )
+
+    # --- Descriptografar CPF do token ---
+    try:
+        cpf = ler_token_sessao(raw_token)
+    except Exception:
+        log.warning("Token de sessao invalido ou expirado na listagem")
+        return JSONResponse(
+            status_code=401,
+            content={
+                "error": {
+                    "code": "invalid_token",
+                    "message": "Token invalido, expirado ou corrompido.",
+                }
+            },
+        )
+
+    # --- Rate limit por IP ---
+    ip = extrair_ip_real(request)
+    if not await ip_limiter.check(ip):
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error": {
+                    "code": "rate_limit_exceeded",
+                    "message": "Limite de requisicoes excedido.",
+                }
+            },
+        )
+
+    # --- Buscar certificados ---
+    try:
+        resultado = fetch_all_certificates(cpf)
+    except ConnectionError as exc:
+        log.error(f"Erro de conexao com Sispubli: {exc}")
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": {
+                    "code": "upstream_error",
+                    "message": "Sispubli temporariamente indisponivel.",
+                }
+            },
+        )
+    except Exception as exc:
+        log.error(f"Erro inesperado na listagem: {exc}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": {
+                    "code": "internal_error",
+                    "message": str(exc),
+                }
+            },
+        )
+
+    # --- Transformar resposta ---
+    certs = resultado.get("certificados", [])
+    certs_com_tickets = _substituir_urls_por_tickets(certs)
+    certs_limpos = _sanitizar_cpf_resposta(certs_com_tickets)
+
+    response_data = {
+        "data": {
+            "usuario_id": resultado.get("usuario_id", ""),
+            "total": resultado.get("total", 0),
+            "certificados": certs_limpos,
+        }
+    }
+
+    response = JSONResponse(content=response_data)
+    response.headers["Cache-Control"] = "public, s-maxage=600"
+    response.headers["Vary"] = "Authorization"
+    return response
 
 
 @app.get(
