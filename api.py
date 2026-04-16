@@ -57,22 +57,30 @@ log = logger.bind(module=__name__)
 async def lifespan(app: FastAPI):
     """Valida configuracoes criticas antes de aceitar requisicoes.
 
-    Em producao (ENVIRONMENT=production), o HASH_SALT DEVE estar definido.
-    Caso contrario, o servidor nao sobe — essa e uma falha intencional
-    para garantir conformidade LGPD desde o primeiro deploy.
+    Em producao (ENVIRONMENT=production), o servidor NAO sobe se:
+        - HASH_SALT nao estiver definido
+        - FERNET_SECRET_KEY nao estiver definido
+        - SECRET_PEPPER nao estiver definido
+
+    Isso garante conformidade LGPD e seguranca criptografica
+    desde o primeiro deploy.
     """
     environment = os.environ.get("ENVIRONMENT", "development")
-    hash_salt = os.environ.get("HASH_SALT", "")
 
-    if environment == "production" and not hash_salt:
-        log.critical(
-            "FALHA CRITICA DE CONFIGURACAO: ENVIRONMENT=production mas HASH_SALT nao definido. "
-            "Defina a variavel de ambiente HASH_SALT antes de subir em producao."
-        )
-        raise RuntimeError(
-            "HASH_SALT e obrigatorio em ambiente de producao. "
-            "Configure a variavel de ambiente antes de iniciar o servidor."
-        )
+    if environment == "production":
+        required_vars = ["HASH_SALT", "FERNET_SECRET_KEY", "SECRET_PEPPER"]
+        missing = [v for v in required_vars if not os.environ.get(v)]
+
+        if missing:
+            msg = f"Variaveis obrigatorias ausentes: {', '.join(missing)}"
+            log.critical(
+                f"FALHA CRITICA DE CONFIGURACAO: ENVIRONMENT=production "
+                f"mas {msg}. Defina antes de subir em producao."
+            )
+            raise RuntimeError(
+                f"{msg}. Configure as variaveis de ambiente "
+                "antes de iniciar o servidor em producao."
+            )
 
     log.info(f"API iniciando em modo: {environment}")
     yield
