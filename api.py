@@ -4,29 +4,36 @@ API REST do Sispubli — FastAPI.
 Expoe o motor de extracao de certificados como endpoints HTTP.
 
 Rotas:
-    GET /                        : Health check
-    GET /api/certificados/{cpf}  : Busca todos os certificados de um CPF
+    GET  /                        : Health check
+    POST /api/auth/token          : Login — gera token de sessao
+    GET  /api/certificados/{cpf}  : Busca certificados (DEPRECATED)
 
 Seguranca:
-    - Fail Fast em producao: se HASH_SALT nao estiver definido, o servidor
-      nao sobe (RuntimeError no lifespan).
-    - CPF nunca aparece em logs em texto claro.
-    - url_download usa padrao URL Template com {cpf} — cliente faz replace.
+    - Fail Fast em producao: HASH_SALT e FERNET_SECRET_KEY obrigatorios.
+    - CPF nunca aparece em logs, URLs ou query parameters.
+    - Tokens Fernet com TTL 15 min para sessao.
+    - Rate limiting anti-enumeracao e anti-bot.
 
 Respostas seguem o padrao:
-    Sucesso: {"data": {...}}
+    Sucesso: {"data": {...}} ou campos diretos
     Erro:    {"error": {"code": "...", "message": "..."}}
 """
 
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from logger import logger
+from rate_limit import auth_limiter, extrair_ip_real
 from scraper import fetch_all_certificates
+from security import (
+    derivar_session_hash,
+    gerar_token_sessao,
+    normalizar_cpf,
+)
 
 log = logger.bind(module=__name__)
 
@@ -176,6 +183,29 @@ class HealthResponse(BaseModel):
     )
 
 
+class TokenRequest(BaseModel):
+    """Payload de entrada para geracao de token de sessao."""
+
+    cpf: str = Field(
+        ...,
+        description="CPF do titular (11 digitos, aceita formatacao com pontos/traco)",
+        json_schema_extra={"example": "12345678900"},
+    )
+
+
+class TokenResponse(BaseModel):
+    """Resposta da rota de autenticacao."""
+
+    access_token: str = Field(
+        ...,
+        description="Token Fernet criptografado (TTL 15 min)",
+    )
+    session_hash: str = Field(
+        ...,
+        description="Hash SHA-256 do token + pepper para cache key (64 chars hex)",
+    )
+
+
 # ===========================================================================
 # App FastAPI
 # ===========================================================================
@@ -218,6 +248,69 @@ def health_check():
     """Rota de verificacao de saude da API."""
     log.info("Health check acessado")
     return {"status": "API do Sispubli rodando"}
+
+
+# ===================================================================
+# ROTA: Autenticacao — POST /api/auth/token
+# ===================================================================
+
+
+@app.post(
+    "/api/auth/token",
+    response_model=TokenResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "CPF invalido"},
+        429: {"model": ErrorResponse, "description": "Rate limit excedido"},
+    },
+)
+async def auth_token(body: TokenRequest, request: Request):
+    """Gera token de sessao e session_hash para um CPF.
+
+    O CPF e normalizado, validado e criptografado via Fernet.
+    O token tem TTL de 15 minutos. O session_hash e derivado
+    com SHA-256 + SECRET_PEPPER para uso como cache key.
+
+    Args:
+        body: JSON com campo 'cpf' (aceita formatacao).
+        request: Objeto Request para extracao de IP.
+
+    Returns:
+        JSON com access_token e session_hash.
+    """
+    # --- Rate limit anti-enumeracao ---
+    ip = extrair_ip_real(request)
+    if not await auth_limiter.check(ip):
+        log.warning(f"Rate limit de auth excedido para IP: {ip}")
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error": {
+                    "code": "rate_limit_exceeded",
+                    "message": "Limite de requisicoes excedido. Tente novamente em breve.",
+                }
+            },
+        )
+
+    # --- Normalizacao e validacao do CPF ---
+    cpf = normalizar_cpf(body.cpf)
+    if not cpf.isdigit() or len(cpf) != 11:
+        log.warning(f"CPF invalido recebido no auth: '{cpf[:3]}...' (len={len(cpf)})")
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "code": "invalid_cpf",
+                    "message": "CPF deve conter exatamente 11 digitos numericos.",
+                }
+            },
+        )
+
+    # --- Geracao de token e hash ---
+    token = gerar_token_sessao(cpf)
+    session_hash = derivar_session_hash(token)
+
+    log.info(f"Token de sessao gerado com sucesso (hash: {session_hash[:16]}...)")
+    return {"access_token": token, "session_hash": session_hash}
 
 
 @app.get(
