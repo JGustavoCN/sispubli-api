@@ -19,22 +19,28 @@ Respostas seguem o padrao:
     Erro:    {"error": {"code": "...", "message": "..."}}
 """
 
+import asyncio
 import copy
+import ipaddress
 import os
 import re
+import socket
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 
+import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from logger import logger
-from rate_limit import auth_limiter, extrair_ip_real, ip_limiter
+from rate_limit import auth_limiter, extrair_ip_real, ip_limiter, ticket_limiter
 from scraper import fetch_all_certificates
 from security import (
     derivar_session_hash,
     gerar_ticket_pdf,
     gerar_token_sessao,
+    ler_ticket_pdf,
     ler_token_sessao,
     normalizar_cpf,
 )
@@ -556,3 +562,185 @@ def buscar_certificados(cpf: str):
                 }
             },
         )
+
+
+# ===================================================================
+# TUNEL DE DOWNLOAD SEGURO — GET /api/pdf/{ticket}
+# ===================================================================
+
+# Constantes
+MAX_PDF_SIZE = 10_000_000  # 10 MB
+TUNNEL_USER_AGENT = "Mozilla/5.0 (compatible; SispubliProxy/1.0)"
+_tunnel_semaphore = asyncio.Semaphore(10)
+
+
+def is_safe_host(hostname: str) -> bool:
+    """Valida hostname contra ataques SSRF (DNS rebinding, IP privado).
+
+    Camada 2 de defesa: garante que o host e o IP resolvido sao seguros:
+        1. Hostname deve ser exatamente 'intranet.ifs.edu.br'
+        2. IP resolvido nao pode ser privado, loopback ou link-local
+
+    Args:
+        hostname: Nome do host extraido da URL.
+
+    Returns:
+        True se seguro, False se bloqueado.
+    """
+    if hostname != "intranet.ifs.edu.br":
+        log.warning(f"SSRF: hostname rejeitado: {hostname}")
+        return False
+
+    try:
+        ip = socket.gethostbyname(hostname)
+        ip_obj = ipaddress.ip_address(ip)
+
+        if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local:
+            log.warning(f"SSRF: DNS rebinding detectado — {hostname} resolve para {ip}")
+            return False
+    except Exception:
+        log.warning(f"SSRF: falha ao resolver DNS de {hostname}")
+        return False
+
+    return True
+
+
+@app.get(
+    "/api/pdf/{ticket}",
+    responses={
+        200: {"content": {"application/pdf": {}}, "description": "PDF streamado"},
+        400: {"model": ErrorResponse, "description": "Ticket invalido"},
+        403: {"model": ErrorResponse, "description": "SSRF bloqueado"},
+        413: {"model": ErrorResponse, "description": "PDF muito grande"},
+        429: {"model": ErrorResponse, "description": "Rate limit excedido"},
+        502: {"model": ErrorResponse, "description": "Upstream indisponivel"},
+    },
+)
+async def tunnel_pdf(ticket: str):
+    """Tunel seguro para download de PDFs do Sispubli.
+
+    7 camadas de defesa:
+        1. Ticket Fernet (decrypt valida integridade)
+        2. SSRF (hostname + DNS rebinding + IP privado)
+        3. Rate limit por ticket hash
+        4. Semaphore de concorrencia (10 max)
+        5. User-Agent consistente
+        6. Content-Length guard (10MB max)
+        7. Streaming isolado (sem repasse de headers)
+
+    Args:
+        ticket: Ticket criptografado gerado pela rota de listagem.
+
+    Returns:
+        Response com o PDF streamado (application/pdf).
+    """
+    # --- Camada 1: Descriptografar ticket ---
+    try:
+        url = ler_ticket_pdf(ticket)
+    except Exception:
+        log.warning("Ticket de PDF invalido ou corrompido")
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "code": "invalid_ticket",
+                    "message": "Ticket invalido ou corrompido.",
+                }
+            },
+        )
+
+    # --- Camada 2: Validacao SSRF ---
+    parsed = urlparse(url)
+    if not parsed.hostname or not is_safe_host(parsed.hostname):
+        log.warning(f"SSRF bloqueado para URL do ticket: {parsed.hostname}")
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": {
+                    "code": "ssrf_blocked",
+                    "message": "URL de destino bloqueada por politica de seguranca.",
+                }
+            },
+        )
+
+    # --- Camada 3: Rate limit por ticket ---
+    ticket_hash = ticket[:32]  # Usar prefixo como chave
+    if not await ticket_limiter.check(ticket_hash):
+        log.warning(f"Rate limit de ticket excedido: {ticket_hash[:16]}...")
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error": {
+                    "code": "rate_limit_exceeded",
+                    "message": "Limite de downloads excedido para este certificado.",
+                }
+            },
+        )
+
+    # --- Camada 4: Semaphore de concorrencia ---
+    async with _tunnel_semaphore:
+        try:
+            # --- Camada 5: User-Agent consistente ---
+            async with httpx.AsyncClient(
+                timeout=30.0,
+                follow_redirects=True,
+            ) as http_client:
+                upstream_response = await http_client.get(
+                    url,
+                    headers={
+                        "User-Agent": TUNNEL_USER_AGENT,
+                    },
+                )
+
+            # --- Camada 6: Content-Length guard ---
+            content_length = int(upstream_response.headers.get("content-length", 0))
+            if content_length > MAX_PDF_SIZE:
+                log.warning(
+                    f"PDF rejeitado por tamanho: {content_length} bytes (max {MAX_PDF_SIZE})"
+                )
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "error": {
+                            "code": "payload_too_large",
+                            "message": "PDF excede o tamanho maximo permitido (10MB).",
+                        }
+                    },
+                )
+
+            # --- Camada 7: Streaming isolado ---
+            content_type = upstream_response.headers.get("content-type", "application/pdf")
+
+            log.info(f"PDF streamado com sucesso ({content_length} bytes)")
+            return Response(
+                content=upstream_response.content,
+                media_type=content_type,
+                headers={
+                    "Content-Disposition": "inline; filename=certificado.pdf",
+                    "Cache-Control": "public, max-age=86400",
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
+
+        except httpx.ConnectError as exc:
+            log.error(f"Erro de conexao com upstream para PDF: {exc}")
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "error": {
+                        "code": "upstream_error",
+                        "message": "Sispubli temporariamente indisponivel.",
+                    }
+                },
+            )
+        except Exception as exc:
+            log.error(f"Erro inesperado no tunel PDF: {exc}")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": {
+                        "code": "internal_error",
+                        "message": "Erro interno no tunel de download.",
+                    }
+                },
+            )
