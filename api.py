@@ -29,7 +29,7 @@ from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
@@ -389,6 +389,9 @@ def _sanitizar_cpf_resposta(certificados: list[dict]) -> list[dict]:
 )
 async def listar_certificados(
     request: Request,
+    session: str | None = Query(
+        None, description="Parâmetro legacy usado em bypass SSR (caso falhe o Authorization header)"
+    ),
     credentials: HTTPAuthorizationCredentials = Depends(security_scheme),  # noqa: B008
 ):
     """Lista certificados do usuario autenticado via Bearer token.
@@ -698,11 +701,44 @@ async def tunnel_pdf(ticket: str):
     async with _tunnel_semaphore:
         try:
             client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
-            request_obj = client.build_request(
-                "GET", url, headers={"User-Agent": TUNNEL_USER_AGENT}
-            )
 
-            # Use send with stream=True to read headers before starting the payload generator
+            # --- BYPASS DE DUAS ETAPAS (TÚNEL FANTASMA) ---
+            # 1. A URL com CPF do Sispubli às vezes não retorna o PDF direto, mas sim 1205 bytes
+            # de um HTML com Frameset legados. Precisamos bater nela para gerar o JSESSIONID.
+            prep_response = await client.get(url, headers={"User-Agent": TUNNEL_USER_AGENT})
+
+            if prep_response.status_code >= 400:
+                log.error(f"Erro na preparacao (Etapa 1): status {prep_response.status_code}")
+                await client.aclose()
+                return JSONResponse(
+                    status_code=502,
+                    content={
+                        "error": {
+                            "code": "bad_gateway",
+                            "message": "Falha na comunicacao com os servidores do IFS.",
+                        }
+                    },
+                )
+
+            # Checamos se o Sispubli devolveu o HTML com <FRAME> ou já mandou o arquivo direto
+            c_type_prep = prep_response.headers.get("content-type", "").lower()
+            if "text/html" in c_type_prep:
+                # O HTML chegou. Isso significa que o PDF foi preparado no backend do IFS
+                # Etapa 2 invisivel: resgatar binário via ReportConnector:
+                parsed = urlparse(url)
+                base_sispubli = f"{parsed.scheme}://{parsed.netloc}"
+                target_url = f"{base_sispubli}/publicacoes/ReportConnector.wsp?tmp.reportShow=true"
+                log.debug(
+                    "Etapa 1 executada com sucesso. Bypass ativado para extracao do binário PDF."
+                )
+            else:
+                # Se por um milagre a arquitetura do Sispubli mudou e mandou o PDF logo na de cara
+                target_url = url
+
+            # ETAPA FINAL: Puxamos como Stream apenas sobre a URL alvo mapeada (o verdadeiro PDF)
+            request_obj = client.build_request(
+                "GET", target_url, headers={"User-Agent": TUNNEL_USER_AGENT}
+            )
             upstream_response = await client.send(request_obj, stream=True)
 
             # --- Camada 6: Content-Length guard antecipado ---

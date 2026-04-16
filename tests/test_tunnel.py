@@ -147,9 +147,14 @@ class TestContentLengthGuard:
 
         mock_response.aclose = AsyncMock()
 
+        mock_prep_response = MagicMock()
+        mock_prep_response.status_code = 200
+        mock_prep_response.headers = {"content-type": "application/pdf"}
+
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_prep_response)
         mock_client.build_request = MagicMock(return_value="mock_request")
         mock_client.send = AsyncMock(return_value=mock_response)
         mock_client.aclose = AsyncMock()
@@ -192,9 +197,14 @@ class TestTunnelHappyPath:
         mock_response.aiter_bytes = mock_aiter_bytes
         mock_response.aclose = AsyncMock()
 
+        mock_prep_response = MagicMock()
+        mock_prep_response.status_code = 200
+        mock_prep_response.headers = {"content-type": "application/pdf"}
+
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_prep_response)
         mock_client.build_request = MagicMock(return_value="mock_request")
         mock_client.send = AsyncMock(return_value=mock_response)
         mock_client.aclose = AsyncMock()
@@ -218,8 +228,9 @@ class TestTunnelHappyPath:
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("timeout"))
         mock_client.build_request = MagicMock(return_value="mock_request")
-        mock_client.send = AsyncMock(side_effect=httpx.ConnectError("timeout"))
+        mock_client.send = AsyncMock()
         mock_client.aclose = AsyncMock()
         mock_client_cls.return_value = mock_client
 
@@ -250,9 +261,14 @@ class TestTunnelHappyPath:
         mock_response.aiter_bytes = mock_aiter_bytes
         mock_response.aclose = AsyncMock()
 
+        mock_prep_response = MagicMock()
+        mock_prep_response.status_code = 200
+        mock_prep_response.headers = {"content-type": "application/pdf"}
+
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_prep_response)
         mock_client.build_request = MagicMock(return_value="mock_request")
         mock_client.send = AsyncMock(return_value=mock_response)
         mock_client.aclose = AsyncMock()
