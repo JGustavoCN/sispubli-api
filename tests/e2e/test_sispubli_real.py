@@ -102,4 +102,4 @@ class TestSispubliReal:
             # URL pode ser None ou string valida
             if cert["url_download"] is not None:
                 assert isinstance(cert["url_download"], str)
-                assert cert["url_download"].startswith("http")
+                assert cert["url_download"].startswith("/api/pdf/")

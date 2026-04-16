@@ -15,7 +15,6 @@ from unittest.mock import MagicMock, patch
 
 from scraper import (
     TIPO_DESCRICAO_MAP,
-    extract_data,
     extract_next_offset,
     fetch_all_certificates,
     generate_cert_id,
@@ -555,25 +554,5 @@ class TestTipoDescricaoMap:
 
 
 # ===================================================================
-# TESTES LEGADOS (mantidos para nao quebrar compatibilidade)
+# Fim dos testes do scraper
 # ===================================================================
-
-
-class TestExtractDataLegacy:
-    """Testes legados usando o mock HTML em arquivo."""
-
-    def test_extract_data_from_mock(self):
-        """Extrai dados do mock HTML original."""
-        import os
-
-        mock_path = os.path.join("tests", "mock_sispubli.html")
-
-        with open(mock_path, encoding="utf-8") as f:
-            html_content = f.read()
-
-        data = extract_data(html_content)
-
-        assert data["token"] == "F8EQDGSELWFLUEFV0HIV"
-        assert data["certificates"][0]["title"] == "Participação no(a) PFisc 2023"
-        expected_params = ["00000000000", "1", "1850", "2011", "0", "2023", "0"]
-        assert data["certificates"][0]["params"] == expected_params

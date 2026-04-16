@@ -351,14 +351,21 @@ def _extrair_bearer_token(request: Request) -> str | None:
     return auth_header[7:]  # Remove 'Bearer '
 
 
-def _substituir_urls_por_tickets(certificados: list[dict]) -> list[dict]:
-    """Substitui url_download por /api/pdf/{ticket} criptografados."""
+def _substituir_urls_por_tickets(certificados: list[dict], cpf_real: str) -> list[dict]:
+    """Substitui url_download por /api/pdf/{ticket} criptografados.
+
+    Preenche o placeholder {cpf} da URL com o CPF real do servidor ANTES de
+    encapsular no Ticket Fernet, caso contrario o Sispubli geraria Relatorios
+    Brancos Vázios (Blank Page de 1096 bytes) buscando pelo cpf literal '{cpf}'.
+    """
     resultado = []
     for cert in certificados:
         cert_copy = copy.deepcopy(cert)
         url = cert_copy.get("url_download")
         if url:
-            ticket = gerar_ticket_pdf(url)
+            # Resolucao fundamental para o 'Blank Page Jasper Bug':
+            url_preenchida = url.replace("{cpf}", cpf_real)
+            ticket = gerar_ticket_pdf(url_preenchida)
             cert_copy["url_download"] = f"/api/pdf/{ticket}"
         resultado.append(cert_copy)
     return resultado
@@ -489,7 +496,7 @@ async def listar_certificados(
 
     # --- Transformar resposta ---
     certs = resultado.get("certificados", [])
-    certs_com_tickets = _substituir_urls_por_tickets(certs)
+    certs_com_tickets = _substituir_urls_por_tickets(certs, cpf)
     certs_limpos = _sanitizar_cpf_resposta(certs_com_tickets)
 
     response_data = {
@@ -553,6 +560,14 @@ def buscar_certificados(cpf: str):
     try:
         log.info("Iniciando busca de certificados para CPF valido")
         resultado = fetch_all_certificates(cpf)
+
+        # --- Transformar resposta e converter para tickets ---
+        certs = resultado.get("certificados", [])
+        certs_com_tickets = _substituir_urls_por_tickets(certs, cpf)
+        certs_limpos = _sanitizar_cpf_resposta(certs_com_tickets)
+
+        resultado["certificados"] = certs_limpos
+
         log.info(f"Busca concluida: {resultado['total']} certificados encontrados")
         return {"data": resultado}
 
@@ -637,23 +652,7 @@ def is_safe_host(hostname: str) -> bool:
     },
 )
 async def tunnel_pdf(ticket: str):
-    """Tunel seguro para download de PDFs do Sispubli.
-
-    7 camadas de defesa:
-        1. Ticket Fernet (decrypt valida integridade)
-        2. SSRF (hostname + DNS rebinding + IP privado)
-        3. Rate limit por ticket hash
-        4. Semaphore de concorrencia (10 max)
-        5. User-Agent consistente
-        6. Content-Length guard (10MB max)
-        7. Streaming isolado (sem repasse de headers)
-
-    Args:
-        ticket: Ticket criptografado gerado pela rota de listagem.
-
-    Returns:
-        Response com o PDF streamado (application/pdf).
-    """
+    """Tunel seguro para download de PDFs do Sispubli com bypass de frameset."""
     # --- Camada 1: Descriptografar ticket ---
     try:
         url = ler_ticket_pdf(ticket)
@@ -662,10 +661,7 @@ async def tunnel_pdf(ticket: str):
         return JSONResponse(
             status_code=400,
             content={
-                "error": {
-                    "code": "invalid_ticket",
-                    "message": "Ticket invalido ou corrompido.",
-                }
+                "error": {"code": "invalid_ticket", "message": "Ticket invalido ou corrompido."}
             },
         )
 
@@ -684,146 +680,144 @@ async def tunnel_pdf(ticket: str):
         )
 
     # --- Camada 3: Rate limit por ticket ---
-    ticket_hash = ticket[:32]  # Usar prefixo como chave
+    ticket_hash = ticket[:32]
     if not await ticket_limiter.check(ticket_hash):
         log.warning(f"Rate limit de ticket excedido: {ticket_hash[:16]}...")
         return JSONResponse(
             status_code=429,
             content={
-                "error": {
-                    "code": "rate_limit_exceeded",
-                    "message": "Limite de downloads excedido para este certificado.",
-                }
+                "error": {"code": "rate_limit_exceeded", "message": "Limite de downloads excedido."}
             },
         )
 
-    # --- Camada 4: Semaphore de concorrencia ---
-    async with _tunnel_semaphore:
+    async def pdf_streamer(authenticated_client, first_chunk, upstream_response, content_iterator):
+        """Gerador assincrono que consome o resto do PDF do Sispubli."""
         try:
-            client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+            yield first_chunk
+            total_bytes = len(first_chunk)
+            async for chunk in content_iterator:
+                total_bytes += len(chunk)
+                yield chunk
 
-            # --- BYPASS DE DUAS ETAPAS (TÚNEL FANTASMA) ---
-            # 1. A URL com CPF do Sispubli às vezes não retorna o PDF direto, mas sim 1205 bytes
-            # de um HTML com Frameset legados. Precisamos bater nela para gerar o JSESSIONID.
-            prep_response = await client.get(url, headers={"User-Agent": TUNNEL_USER_AGENT})
+            log.info(f"✅ [TUNEL SUCESSO] Certificado entregue. Total: {total_bytes} bytes.")
+        except Exception as e:
+            log.error(f"❌ [TUNEL ERRO] Falha durante o streaming: {str(e)}")
+        finally:
+            await upstream_response.aclose()
+            await authenticated_client.aclose()
+
+    # Camada 4: Controle de Concorrência
+    async with _tunnel_semaphore:
+        # Camada 5: Simulamos ser o Google Chrome perfeito para burlar firewalls/WAF
+        browser_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",  # noqa: E501
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",  # noqa: E501
+            "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Connection": "keep-alive",
+        }
+
+        # O httpx vai reter os cookies de sessao temporarios entre a Etapa A e B
+        client = httpx.AsyncClient(timeout=20.0, follow_redirects=True)
+        try:
+            # ETAPA A: O Gatilho (Bate na URL com o CPF para armar o PDF no backend)
+            prep_response = await client.get(url, headers=browser_headers)
 
             if prep_response.status_code >= 400:
-                log.error(f"Erro na preparacao (Etapa 1): status {prep_response.status_code}")
                 await client.aclose()
+                log.error(f"[TUNEL ERRO] Falha no gatilho. Status {prep_response.status_code}")
                 return JSONResponse(
                     status_code=502,
                     content={
                         "error": {
-                            "code": "bad_gateway",
-                            "message": "Falha na comunicacao com os servidores do IFS.",
+                            "code": "upstream_error",
+                            "message": "O sistema de origem nao respondeu corretamente ao gatilho.",
                         }
                     },
                 )
 
-            # Checamos se o Sispubli devolveu o HTML com <FRAME> ou já mandou o arquivo direto
-            c_type_prep = prep_response.headers.get("content-type", "").lower()
-            if "text/html" in c_type_prep:
-                # O HTML chegou. Isso significa que o PDF foi preparado no backend do IFS
-                # Etapa 2 invisivel: resgatar binário via ReportConnector:
-                parsed = urlparse(url)
-                base_sispubli = f"{parsed.scheme}://{parsed.netloc}"
-                target_url = f"{base_sispubli}/publicacoes/ReportConnector.wsp?tmp.reportShow=true"
-                log.debug(
-                    "Etapa 1 executada com sucesso. Bypass ativado para extracao do binário PDF."
-                )
-            else:
-                # Se por um milagre a arquitetura do Sispubli mudou e mandou o PDF logo na de cara
-                target_url = url
+            # ETAPA B: A Captura (Requisita o binario passando o Referer forjado)
+            base_sispubli = f"{parsed.scheme}://{parsed.netloc}"
+            target_url = f"{base_sispubli}/publicacoes/ReportConnector.wsp?tmp.reportShow=true"
 
-            # ETAPA FINAL: Puxamos como Stream apenas sobre a URL alvo mapeada (o verdadeiro PDF)
-            request_obj = client.build_request(
-                "GET", target_url, headers={"User-Agent": TUNNEL_USER_AGENT, "Referer": url}
-            )
-            upstream_response = await client.send(request_obj, stream=True)
+            pdf_headers = browser_headers.copy()
+            pdf_headers["Referer"] = url  # <-- O SEGREDO DO SISPUBLI ESTA AQUI
 
-            # --- Camada 6: Content-Length guard antecipado ---
-            content_length = int(upstream_response.headers.get("content-length", 0))
-            if content_length > MAX_PDF_SIZE:
-                log.warning(
-                    f"PDF rejeitado por tamanho: {content_length} bytes (max {MAX_PDF_SIZE})"
-                )
+            # Abrimos o stream manualmente para inspecionar o primeiro chunk
+            # antes de dar 200 pro cliente
+            stream_req = client.build_request("GET", target_url, headers=pdf_headers)
+            upstream_response = await client.send(stream_req, stream=True)
+
+            # --- A INTERCEPTACAO ANTECIPADA (Camada 2 da SPEC) ---
+            if upstream_response.status_code != 200:
                 await upstream_response.aclose()
                 await client.aclose()
+                log.error(f"❌ [TUNEL ERRO] Upstream status {upstream_response.status_code}")
                 return JSONResponse(
-                    status_code=413,
+                    status_code=502,
                     content={
                         "error": {
-                            "code": "payload_too_large",
-                            "message": "PDF excede o tamanho maximo permitido (10MB).",
+                            "code": "upstream_refusal",
+                            "message": "O sistema de origem recusou a entrega do arquivo.",
                         }
                     },
                 )
 
-            # Verifica falha de upstream
-            if upstream_response.status_code >= 400:
-                log.error(f"Erro no upstream: status {upstream_response.status_code}")
+            # Lemos o primeiro chunk para validar os Magic Bytes do PDF
+            content_iterator = upstream_response.aiter_bytes()
+            try:
+                primeiro_chunk = await anext(content_iterator)
+            except StopAsyncIteration:
+                primeiro_chunk = b""
+
+            # Validação rigorosa do PDF (Magic Bytes %PDF-)
+            if not primeiro_chunk.lstrip().startswith(b"%PDF-"):
+                log.error("❌ [TUNEL ERRO] O Sispubli retornou HTML/Erro em vez de PDF!")
+                log.error(f"Conteudo interceptado: {primeiro_chunk[:100]!r}")
                 await upstream_response.aclose()
                 await client.aclose()
                 return JSONResponse(
                     status_code=502,
                     content={
                         "error": {
-                            "code": "bad_gateway",
-                            "message": "Falha ao obter arquivo original do Sispubli.",
+                            "code": "fake_pdf",
+                            "message": (
+                                "O arquivo retornado pelo sistema de origem nao e um PDF valido."
+                            ),
                         }
                     },
                 )
 
-            # --- Camada 7: Streaming isolado (Byte Streaming Limiter) ---
-            async def stream_generator():
-                total_bytes = 0
-                try:
-                    async for chunk in upstream_response.aiter_bytes(chunk_size=65536):
-                        total_bytes += len(chunk)
-                        if total_bytes > MAX_PDF_SIZE:
-                            log.warning(
-                                f"PDF truncado ativamente por limite excedido: "
-                                f"{total_bytes} bytes streamados"
-                            )
-                            break
-                        yield chunk
-                finally:
-                    await upstream_response.aclose()
-                    await client.aclose()
-
-            content_type = upstream_response.headers.get("content-type", "application/pdf")
-            log.info(f"PDF streamado com sucesso (informado {content_length} bytes)")
-
+            # Se chegou aqui, o arquivo é um PDF legítimo.
+            # Iniciamos o streaming real para o navegador.
             return StreamingResponse(
-                stream_generator(),
-                status_code=200,
-                media_type=content_type,
+                pdf_streamer(client, primeiro_chunk, upstream_response, content_iterator),
+                media_type="application/pdf",
                 headers={
-                    "Content-Disposition": "inline; filename=certificado.pdf",
-                    "Cache-Control": "public, max-age=86400",
+                    "Content-Disposition": 'inline; filename="certificado.pdf"',
+                    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
                     "X-Content-Type-Options": "nosniff",
                 },
             )
 
-        except httpx.ConnectError as exc:
-            log.error(f"Erro de conexao com upstream para PDF: {exc}")
+        except httpx.TimeoutException:
+            await client.aclose()
+            log.error(f"⏳ [TUNEL TIMEOUT] O Sispubli demorou +20s: {ticket[:10]}...")
             return JSONResponse(
-                status_code=502,
+                status_code=504,
                 content={
                     "error": {
-                        "code": "upstream_error",
-                        "message": "Sispubli temporariamente indisponivel.",
+                        "code": "gateway_timeout",
+                        "message": "O sistema de origem demorou a responder.",
                     }
                 },
             )
-        except Exception as exc:
-            log.error(f"Erro inesperado no tunel PDF: {exc}")
+        except Exception as e:
+            if "client" in locals():
+                await client.aclose()
+            log.error(f"💥 [TUNEL CRASH] Erro inesperado no motor: {str(e)}")
             return JSONResponse(
                 status_code=500,
                 content={
-                    "error": {
-                        "code": "internal_error",
-                        "message": "Erro interno no tunel de download.",
-                    }
+                    "error": {"code": "internal_error", "message": f"Erro no tunel: {str(e)}"}
                 },
             )

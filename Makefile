@@ -1,7 +1,7 @@
 # Makefile — Sispubli API
 # Gerenciador: uv | Linter/Formatter: ruff | Testes: pytest + coverage
 
-.PHONY: help install format lint test test-v test-e2e serve run \
+.PHONY: help install format lint lint-fix test test-v test-e2e test-tunnel cov-html serve run \
         pre-commit docker-build docker-run clean check
 
 # Alvo padrão
@@ -14,9 +14,12 @@ help:
 	@echo "  make install      - Instala dependencias (uv sync)"
 	@echo "  make format       - Formata codigo (ruff format)"
 	@echo "  make lint         - Analise estatica (ruff check)"
+	@echo "  make lint-fix     - Corrige erros de lint automaticamente"
 	@echo "  make test         - Testes + cobertura (pytest-cov)"
 	@echo "  make test-v       - Testes verbose com logs"
+	@echo "  make test-tunnel  - Testes especificos do tunel de PDF"
 	@echo "  make test-e2e     - Testes E2E (Sispubli real)"
+	@echo "  make cov-html     - Gera relatorio de cobertura em HTML"
 	@echo "  make serve        - Sobe API REST (uvicorn --reload)"
 	@echo "  make run          - Executa scraper no terminal"
 	@echo "  make pre-commit   - Instala hooks de pre-commit"
@@ -33,6 +36,9 @@ format:
 	uv run ruff format .
 
 lint:
+	uv run ruff check .
+
+lint-fix:
 	uv run ruff check . --fix
 
 test:
@@ -41,8 +47,14 @@ test:
 test-v:
 	uv run pytest -v --tb=long --log-cli-level=DEBUG
 
+test-tunnel:
+	uv run pytest tests/test_tunnel.py tests/test_tunnel_e2e.py -v
+
 test-e2e:
 	uv run pytest tests/e2e/ -v --tb=short -m e2e --no-header --override-ini="addopts="
+
+cov-html:
+	uv run pytest --cov=. --cov-report=html
 
 serve:
 	uv run uvicorn api:app --reload --host 0.0.0.0 --port 8000
@@ -61,10 +73,11 @@ docker-build:
 docker-run:
 	docker run -p 8000:8000 --env-file .env sispubli-api
 
-check: lint test
+check: lint-fix test
 
 clean:
 	@if exist .pytest_cache rmdir /s /q .pytest_cache
 	@if exist .ruff_cache rmdir /s /q .ruff_cache
+	@if exist htmlcov rmdir /s /q htmlcov
 	@for /d /r . %%d in (__pycache__) do @if exist "%%d" rmdir /s /q "%%d"
 	@echo Limpeza concluida.

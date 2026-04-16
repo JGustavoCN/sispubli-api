@@ -1,388 +1,162 @@
-# Sispubli API — Contrato e Documentação
+# Sispubli API — Contrato e Documentação (v1.1.0)
 
 > **API REST de Extração de Certificados Acadêmicos**
 > Instituto Federal de Sergipe (IFS) — Sistema Sispubli
+> **Fase: Estabilidade (Milestone 2 - Secure Tunnel & Bearer Auth)**
 
 ---
 
 ## Sumário
 
-- [Sispubli API — Contrato e Documentação](#sispubli-api--contrato-e-documentação)
-  - [Sumário](#sumário)
-  - [Visão Geral](#visão-geral)
-  - [Base URL](#base-url)
-  - [Endpoints](#endpoints)
-    - [`GET /`](#get-)
-    - [`GET /api/certificados/{cpf}`](#get-apicertificadoscpf)
-      - [Parâmetros](#parâmetros)
-      - [Validação](#validação)
-      - [Resposta de Sucesso `200 OK`](#resposta-de-sucesso-200-ok)
-      - [Campos do Certificado](#campos-do-certificado)
-  - [Fluxo do CPF (Ciclo de Vida Seguro)](#fluxo-do-cpf-ciclo-de-vida-seguro)
-  - [Regras de Segurança (LGPD)](#regras-de-segurança-lgpd)
-    - [1. Mascaramento do CPF nos Logs](#1-mascaramento-do-cpf-nos-logs)
-    - [2. Geração do Hash SHA-256 (id\_unico)](#2-geração-do-hash-sha-256-id_unico)
-    - [3. URL Template (Padrão `{cpf}`)](#3-url-template-padrão-cpf)
-  - [Códigos de Erro](#códigos-de-erro)
-    - [Padrões de erro reconhecidos como `upstream_error`](#padrões-de-erro-reconhecidos-como-upstream_error)
-  - [Tipos de Certificado](#tipos-de-certificado)
-  - [Exemplos de Uso](#exemplos-de-uso)
-    - [curl](#curl)
-    - [Python (requests)](#python-requests)
-    - [JavaScript (fetch)](#javascript-fetch)
-  - [Cache](#cache)
-  - [Variáveis de Ambiente](#variáveis-de-ambiente)
+- [Visão Geral](#visão-geral)
+- [Base URL](#base-url)
+- [Fluxo de Autenticação e Acesso](#fluxo-de-autenticação-e-acesso)
+- [Endpoints](#endpoints)
+  - [`GET /`](#get-)
+  - [`POST /api/auth/token`](#post-apiauthtoken)
+  - [`GET /api/certificados`](#get-apicertificados)
+  - [`GET /api/pdf/{ticket}`](#get-apipdfticket)
+- [Segurança e LGPD](#segurança-e-lgpd)
+- [Códigos de Erro](#códigos-de-erro)
+- [Variáveis de Ambiente](#variáveis-de-ambiente)
 
 ---
 
 ## Visão Geral
 
-A Sispubli API é um gateway REST que abstrai o sistema legado de certificados do IFS (Sispubli). Ela realiza web scraping automatizado com tratamento de CSRF tokens, paginação e sessões, entregando os resultados em JSON padronizado.
-
-**Características principais:**
-
-- Nenhuma autenticação é necessária (o sistema Sispubli é público)
-- O CPF é o único dado pessoal manipulado
-- Conformidade LGPD: CPF **nunca** aparece em texto claro nas respostas
-- Cache em memória (`lru_cache`) para evitar requisições repetidas
+A Sispubli API v1.1.0 é um gateway REST que abstrai o sistema legado de certificados do IFS. Esta versão introduz o **Secure Tunneling**, onde os arquivos PDF não são mais acessados via link direto do Sispubli, mas através de um proxy seguro que protege o CPF do usuário e previne bloqueios de rede (CORS/WAF).
 
 ---
 
 ## Base URL
 
-| Ambiente       | URL                                          |
-| -------------- | -------------------------------------------- |
-| Local          | `http://localhost:8000`                      |
-| Produção       | Configurável (Vercel / Docker)               |
-| Documentação   | `{BASE_URL}/docs` (Swagger UI automático)    |
+| Ambiente | URL |
+| :--- | :--- |
+| Local | `http://localhost:8000` |
+| Produção | `{BASE_URL}` (Vercel/Docker) |
+
+---
+
+## Fluxo de Autenticação e Acesso
+
+A API utiliza uma jornada de 3 etapas para garantir a privacidade dos dados:
+
+1.  **Identificação:** O cliente envia o CPF para `/api/auth/token`.
+2.  **Autorização:** A API retorna um `access_token` (Fernet) válido por 15 minutos.
+3.  **Consumo:** O cliente usa o token no header `Authorization: Bearer` para listar certificados e obter os tickets de download tunelados.
 
 ---
 
 ## Endpoints
 
 ### `GET /`
-
-**Health Check** — Verifica se a API está no ar.
+**Health Check** — Verifica se a API está operacional.
 
 **Resposta `200 OK`:**
-
 ```json
-{
-  "status": "API do Sispubli rodando"
-}
+{ "status": "API do Sispubli rodando" }
 ```
 
 ---
 
-### `GET /api/certificados/{cpf}`
+### `POST /api/auth/token`
+**Gera um token de sessão para um CPF.**
 
-**Busca todos os certificados disponíveis para um CPF.**
-
-#### Parâmetros
-
-| Parâmetro | Tipo     | Local | Obrigatório | Descrição                                   |
-| --------- | -------- | ----- | ----------- | ------------------------------------------- |
-| `cpf`     | `string` | Path  | ✅ Sim      | CPF do titular (apenas números, 11 dígitos) |
-
-#### Validação
-
-O CPF é validado antes de qualquer processamento:
-
-```bash
-1. cpf.isdigit() → deve conter apenas números
-2. len(cpf) == 11 → exatamente 11 caracteres
+#### Payload
+```json
+{
+  "cpf": "12345678900"
+}
 ```
 
-> **Nota:** Validação de dígitos verificadores do CPF (módulo 11) **não é feita** — o sistema Sispubli aceita qualquer sequência de 11 dígitos e simplesmente retorna uma lista vazia se não houver certificados.
+#### Respostas
+- **200 OK:** Sucesso.
+  ```json
+  {
+    "access_token": "gAAAAABp...",
+    "session_hash": "64_chars_hex_hash"
+  }
+  ```
+- **400 Bad Request:** CPF inválido.
+- **429 Too Many Requests:** Rate limit atingido.
 
-#### Resposta de Sucesso `200 OK`
+---
 
+### `GET /api/certificados`
+**Lista todos os certificados do usuário autenticado.**
+
+#### Headers
+| Header | Valor | Obrigatório |
+| :--- | :--- | :--- |
+| `Authorization` | `Bearer <access_token>` | ✅ Sim |
+
+#### Resposta `200 OK`
 ```json
 {
   "data": {
     "usuario_id": "***.456.789-**",
-    "total": 2,
+    "total": 1,
     "certificados": [
       {
-        "id_unico": "a3f8c2d1e4b7091f6e2a5d8c3b1f4e7a9d2c5b8e1f4a7c0d3b6e9f2a5c8b1e4",
-        "titulo": "Participacao no(a) SEPEX 2023",
-        "url_download": "http://intranet.ifs.edu.br/publicacoes/relat/certificado_participacao_process.wsp?tmp.tx_cpf={cpf}&tmp.id_programa=1850&tmp.id_edicao=2011",
+        "id_unico": "sha256_hash",
+        "titulo": "Monitoria de Algoritmos",
+        "url_download": "/api/pdf/ticket_fernet_id",
         "ano": 2023,
         "tipo_codigo": 1,
-        "tipo_descricao": "Participacao"
-      },
-      {
-        "id_unico": "b7c2e8f4a1d3096e5f2a8d7c4b1e3f6a0d9c2b5e8f1a4c7d0b3e6f9a2c5b8e1",
-        "titulo": "Participacao no(a) SNCT 2021",
-        "url_download": "http://intranet.ifs.edu.br/publicacoes/relat/certificado_participacao_process.wsp?tmp.tx_cpf={cpf}&tmp.id_programa=6&tmp.id_edicao=1472",
-        "ano": 2021,
-        "tipo_codigo": 1,
-        "tipo_descricao": "Participacao"
+        "tipo_descricao": "Participação"
       }
     ]
   }
 }
 ```
 
-#### Campos do Certificado
+---
 
-| Campo            | Tipo        | Descrição                                                                 |
-| ---------------- | ----------- | ------------------------------------------------------------------------- |
-| `id_unico`       | `string`    | Hash SHA-256 (64 chars hex) gerado com SALT secreto. Identificador LGPD.  |
-| `titulo`         | `string`    | Título do evento conforme registrado no Sispubli.                         |
-| `url_download`   | `string?`   | URL Template para download. Contém `{cpf}` como placeholder.              |
-| `ano`            | `int`       | Ano de realização do evento.                                              |
-| `tipo_codigo`    | `int`       | Código numérico do tipo (1-11).                                           |
-| `tipo_descricao` | `string`    | Descrição legível do tipo de certificado.                                 |
+### `GET /api/pdf/{ticket}`
+**Túnel de download seguro para o binário PDF.**
+
+Este endpoint não requer header de autenticação, pois o `ticket` já possui a URL e o CPF criptografados.
+
+#### Comportamento de Segurança
+- **Anti-Fake PDF:** A API valida se o Sispubli retornou um PDF legítimo (`%PDF-`). Se retornar HTML (erro do sistema legado), a API aborta e retorna `502`.
+- **Referer Forger:** Simula o acesso vindo da intranet do IFS para evitar bloqueios.
+- **SSRF Protection:** Valida se a URL interna pertence ao domínio autorizado.
 
 ---
 
-## Fluxo do CPF (Ciclo de Vida Seguro)
+## Segurança e LGPD
 
-O diagrama abaixo ilustra **exatamente onde** o CPF do titular é utilizado em cada etapa do processamento:
+### 1. Mascaramento de CPF
+O CPF real nunca é exibido de forma completa. Nas respostas JSON e nos logs, ele é sempre mascarado como `***.456.789-**`.
 
-```bash
-Cliente (Flutter / MCP / curl)
-│
-│  GET /api/certificados/{cpf}
-│  ← CPF viaja na URL (HTTPS criptografado)
-│
-▼
-┌─────────────────────────────────────────────────────────┐
-│  api.py — Camada de Validação                           │
-│                                                         │
-│  1. Valida: cpf.isdigit() AND len(cpf) == 11            │
-│  2. Log: "Requisicao recebida: GET .../cpf[:3]***"      │
-│     └─ Apenas os 3 primeiros dígitos são logados        │
-│  3. Chama: fetch_all_certificates(cpf)                  │
-│     └─ lru_cache: se mesmo CPF, retorna do cache        │
-└─────────────────────────────────────────────────────────┘
-│
-▼
-┌─────────────────────────────────────────────────────────┐
-│  scraper.py — Motor de Extração                         │
-│                                                         │
-│  [PASSO 1] GET → Sispubli (CSRF)                        │
-│     └─ Captura: wi.token + cookies de sessão            │
-│     └─ CPF NÃO é enviado neste passo                    │
-│                                                         │
-│  [PASSO 2] POST → Sispubli                              │
-│     └─ Payload: { "tmp.tx_cpf": cpf }  ← CPF real      │
-│     └─ Conexão: HTTP (rede interna IFS)                 │
-│     └─ Log: mask_cpf(cpf) → "***.456.789-**"            │
-│                                                         │
-│  [LOOP] Para cada certificado extraído do HTML:         │
-│     ├─ id_unico = SHA256(HASH_SALT + cpf + tipo +       │
-│     │                     programa + edicao)             │
-│     │   └─ CPF hasheado — irreversível com SALT         │
-│     │                                                   │
-│     ├─ url_download = "...?tmp.tx_cpf={cpf}&..."        │
-│     │   └─ {cpf} literal (placeholder, NÃO o CPF real)  │
-│     │                                                   │
-│     ├─ titulo, ano, tipo_codigo, tipo_descricao         │
-│     │   └─ Metadata pura — sem dados pessoais           │
-│     │                                                   │
-│     └─ CPF NUNCA entra no objeto de retorno em          │
-│        texto claro                                      │
-└─────────────────────────────────────────────────────────┘
-│
-▼
-┌─────────────────────────────────────────────────────────┐
-│  Resposta JSON Final                                    │
-│                                                         │
-│  {                                                      │
-│    "data": {                                            │
-│      "usuario_id": "***.456.789-**",  ← mascarado       │
-│      "total": 16,                                       │
-│      "certificados": [{                                 │
-│        "id_unico": "sha256...",       ← hash LGPD       │
-│        "url_download": "...{cpf}...", ← template        │
-│        "ano": 2023,                                     │
-│        "tipo_codigo": 1,                                │
-│        "tipo_descricao": "Participacao"                 │
-│      }]                                                 │
-│    }                                                    │
-│  }                                                      │
-└─────────────────────────────────────────────────────────┘
-│
-▼
-Cliente faz: url_download.replace("{cpf}", cpf_real)
-e acessa diretamente o PDF do Sispubli.
-```
+### 2. Tokens Auto-contidos
+O `access_token` carrega o CPF criptografado com Fernet. A chave secreta nunca sai do servidor.
 
----
-
-## Regras de Segurança (LGPD)
-
-### 1. Mascaramento do CPF nos Logs
-
-Toda aparição do CPF nos logs passa obrigatoriamente pela função `mask_cpf()`:
-
-```bash
-mask_cpf("12345678900") → "***.456.789-**"
-```
-
-| Posição  | Tratamento     |
-| -------- | -------------- |
-| `[0:3]`  | `***` (oculto) |
-| `[3:6]`  | Visível        |
-| `[6:9]`  | Visível        |
-| `[9:11]` | `**` (oculto)  |
-
-**Garantia:** Nenhum log em qualquer nível (DEBUG, INFO, WARNING, ERROR) contém o CPF completo.
-
-### 2. Geração do Hash SHA-256 (id_unico)
-
-Cada certificado recebe um identificador único gerado por:
-
-```bash
-id_unico = SHA256(HASH_SALT + cpf + tipo + programa + edicao)
-```
-
-| Propriedade       | Valor                                              |
-| ----------------- | -------------------------------------------------- |
-| Algoritmo         | SHA-256                                            |
-| Tamanho           | 64 caracteres hexadecimais                         |
-| SALT              | Variável de ambiente `HASH_SALT`                   |
-| Determinístico    | Sim — mesmos inputs geram o mesmo hash             |
-| Reversível        | Não — computacionalmente inviável com SALT secreto |
-
-**Fail Fast:** Em ambiente de produção (`ENVIRONMENT=production`), se `HASH_SALT` não estiver definido, o servidor **não sobe** — `RuntimeError` no lifespan.
-
-### 3. URL Template (Padrão `{cpf}`)
-
-As URLs de download retornadas pela API contêm o placeholder literal `{cpf}` em vez do CPF real:
-
-```url
-http://intranet.ifs.edu.br/.../certificado_participacao_process.wsp?tmp.tx_cpf={cpf}&tmp.id_programa=1850&tmp.id_edicao=2011
-```
-
-O **cliente** é responsável por substituir `{cpf}` pelo CPF real antes de acessar:
-
-```python
-# Python
-url_final = cert["url_download"].replace("{cpf}", cpf_do_usuario)
-
-// JavaScript / Flutter
-urlFinal = cert.url_download.replaceAll("{cpf}", cpfDoUsuario);
-```
-
-**Motivo:** Evitar o tráfego do CPF em texto claro no JSON de resposta. O CPF só viaja na URL de download quando o próprio titular decide baixar o certificado.
+### 3. Tickets de Download
+A `url_download` retornada na listagem é um caminho relativo para o túnel da própria API, impedindo que o CPF do usuário seja exposto em parâmetros de URL em logs de proxies externos.
 
 ---
 
 ## Códigos de Erro
 
-Todas as respostas de erro seguem o envelope:
-
-```json
-{
-  "error": {
-    "code": "codigo_snake_case",
-    "message": "Descrição legível em português."
-  }
-}
-```
-
-| HTTP | `code`           | Causa                                               |
-| ---- | ---------------- | --------------------------------------------------- |
-| 400  | `invalid_cpf`    | CPF não é numérico ou não tem 11 dígitos.           |
-| 502  | `upstream_error` | O Sispubli está fora do ar, retornou erro ou timeout|
-| 500  | `internal_error` | Erro inesperado no processamento interno.           |
-
-### Padrões de erro reconhecidos como `upstream_error`
-
-- `"Erro ao acessar"`
-- `"Erro ao enviar POST"`
-- `"Erro ao buscar pagina"`
-- `"Token nao encontrado"`
-
----
-
-## Tipos de Certificado
-
-O Sispubli classifica certificados por um código numérico (1-11). A API enriquece o retorno com a descrição legível:
-
-| `tipo_codigo` | `tipo_descricao`            | Endpoint Sispubli                                      | CPF na URL? |
-| ------------- | --------------------------- | ------------------------------------------------------ | ----------- |
-| 1             | Participação                | `certificado_participacao_process.wsp`                 | ✅ `{cpf}`  |
-| 2             | Autor                       | `certificado_autor_process.wsp`                        | ✅ `{cpf}`  |
-| 3             | Mini-Curso                  | `certificado_participacao_sub_evento_process.wsp`      | ✅ `{cpf}`  |
-| 4             | Avaliação                   | `certificado_avaliacao_process.wsp`                    | ✅ `{cpf}`  |
-| 5             | Avaliação de Programa       | `certificado_avaliacao_programa_process.wsp`           | ✅ `{cpf}`  |
-| 6             | Certificado Interno         | `certificado_process.wsp`                              | ❌ Não      |
-| 7             | Orientação                  | `certificado_orientador_process.wsp`                   | ✅ `{cpf}`  |
-| 8             | Aluno Voluntário            | `certificado_aluno_voluntario_process.wsp`             | ✅ `{cpf}`  |
-| 9             | Aluno Bolsista              | `certificado_aluno_bolsista_process.wsp`               | ✅ `{cpf}`  |
-| 10            | Ministrante de Sub-Evento   | `certificado_ministrante_sub_evento_process.wsp`       | ❌ Não      |
-| 11            | Coorientação                | `certificado_coorientador_process.wsp`                 | ✅ `{cpf}`  |
-
----
-
-## Exemplos de Uso
-
-### curl
-
-```bash
-# Buscar certificados
-curl -s http://localhost:8000/api/certificados/12345678900 | jq .
-
-# Health check
-curl http://localhost:8000/
-```
-
-### Python (requests)
-
-```python
-import requests
-
-cpf = "12345678900"
-resp = requests.get(f"http://localhost:8000/api/certificados/{cpf}")
-data = resp.json()["data"]
-
-print(f"Total: {data['total']} certificados")
-for cert in data["certificados"]:
-    # Substituir template pelo CPF real para download
-    url = cert["url_download"].replace("{cpf}", cpf)
-    print(f"  - {cert['titulo']} ({cert['ano']}) → {url}")
-```
-
-### JavaScript (fetch)
-
-```javascript
-const cpf = "12345678900";
-const resp = await fetch(`/api/certificados/${cpf}`);
-const { data } = await resp.json();
-
-data.certificados.forEach(cert => {
-  const downloadUrl = cert.url_download.replace("{cpf}", cpf);
-  console.log(`${cert.titulo} → ${downloadUrl}`);
-});
-```
-
----
-
-## Cache
-
-A função `fetch_all_certificates()` utiliza `lru_cache(maxsize=128)`:
-
-- **Mesma requisição** (mesmo CPF) dentro do ciclo de vida do servidor retorna instantaneamente do cache
-- O cache é invalidado automaticamente ao reiniciar o servidor
-- Para invalidar manualmente: `fetch_all_certificates.cache_clear()`
-
-> **Nota:** O cache é in-memory. Em ambientes serverless (Vercel), cada cold start começa com cache vazio.
+| HTTP | Código | Descrição |
+| :--- | :--- | :--- |
+| 400 | `invalid_cpf` | O CPF informado não possui 11 dígitos numéricos. |
+| 401 | `unauthorized` | Token ausente, inválido ou expirado. |
+| 403 | `ssrf_blocked` | Tentativa de acessar host não autorizado. |
+| 502 | `upstream_error` | O Sispubli retornou um erro ou está inacessível. |
+| 502 | `fake_pdf` | O motor detectou que o arquivo original não é um PDF. |
+| 504 | `gateway_timeout` | O Sispubli demorou mais de 20s para responder. |
 
 ---
 
 ## Variáveis de Ambiente
 
-| Variável      | Obrigatória    | Padrão                   | Descrição                                           |
-| ------------- | -------------- | ------------------------ | --------------------------------------------------- |
-| `HASH_SALT`   | Em produção ✅ | `chave_secreta_padrao`   | Salt para SHA-256. Fail Fast se ausente em prod.    |
-| `ENVIRONMENT` | Não            | `development`            | Define modo de execução (`development`/`production`)|
-| `CPF_TESTE`   | Apenas E2E     | —                        | CPF real para testes de integração.                 |
+| Variável | Descrição |
+| :--- | :--- |
+| `FERNET_SECRET_KEY` | Chave para criptografia dos tokens e tickets (32 bytes base64). |
+| `HASH_SALT` | Salt para gerar os `id_unico` dos certificados. |
+| `SECRET_PEPPER` | Usado na derivação do `session_hash`. |
 
 ---
-
-**Documento gerado automaticamente — Sispubli API v1.1.0**
-Contrato de API para o Sistema de Publicações do IFS.
+**Documento gerado automaticamente — Sispubli API Stable v1.1.0**
