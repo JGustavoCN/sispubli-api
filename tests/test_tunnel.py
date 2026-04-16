@@ -289,5 +289,8 @@ class TestTunnelHappyPath:
         # Verificar que os headers nao foram repassados ao upstream
         call_kwargs = mock_client.build_request.call_args
         upstream_headers = call_kwargs.kwargs.get("headers", {})
-        assert "referer" not in {k.lower() for k in upstream_headers}
+
+        # O Referer DEVE ser injetado ativamente contendo a URL original mapeada no ticket.
+        # Ele JAMAIS deve repassar o "http://evil.com" injetado pelo cliente na camada frontal.
+        assert upstream_headers.get("Referer") == url
         assert "cookie" not in {k.lower() for k in upstream_headers}

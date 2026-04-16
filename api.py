@@ -737,7 +737,7 @@ async def tunnel_pdf(ticket: str):
 
             # ETAPA FINAL: Puxamos como Stream apenas sobre a URL alvo mapeada (o verdadeiro PDF)
             request_obj = client.build_request(
-                "GET", target_url, headers={"User-Agent": TUNNEL_USER_AGENT}
+                "GET", target_url, headers={"User-Agent": TUNNEL_USER_AGENT, "Referer": url}
             )
             upstream_response = await client.send(request_obj, stream=True)
 
