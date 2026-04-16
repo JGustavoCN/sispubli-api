@@ -145,10 +145,14 @@ class TestContentLengthGuard:
         mock_response.status_code = 200
         mock_response.headers = {"content-length": "50000000"}  # 50MB
 
+        mock_response.aclose = AsyncMock()
+
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client.build_request = MagicMock(return_value="mock_request")
+        mock_client.send = AsyncMock(return_value=mock_response)
+        mock_client.aclose = AsyncMock()
         mock_client_cls.return_value = mock_client
 
         url = "http://intranet.ifs.edu.br/publicacoes/relat/cert.wsp?x=1"
@@ -182,10 +186,18 @@ class TestTunnelHappyPath:
         }
         mock_response.content = pdf_bytes
 
+        async def mock_aiter_bytes(chunk_size):
+            yield pdf_bytes
+
+        mock_response.aiter_bytes = mock_aiter_bytes
+        mock_response.aclose = AsyncMock()
+
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client.build_request = MagicMock(return_value="mock_request")
+        mock_client.send = AsyncMock(return_value=mock_response)
+        mock_client.aclose = AsyncMock()
         mock_client_cls.return_value = mock_client
 
         url = "http://intranet.ifs.edu.br/publicacoes/relat/cert.wsp?x=1"
@@ -206,7 +218,9 @@ class TestTunnelHappyPath:
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("timeout"))
+        mock_client.build_request = MagicMock(return_value="mock_request")
+        mock_client.send = AsyncMock(side_effect=httpx.ConnectError("timeout"))
+        mock_client.aclose = AsyncMock()
         mock_client_cls.return_value = mock_client
 
         url = "http://intranet.ifs.edu.br/publicacoes/relat/cert.wsp?x=1"
@@ -230,10 +244,18 @@ class TestTunnelHappyPath:
         }
         mock_response.content = pdf_bytes
 
+        async def mock_aiter_bytes(chunk_size):
+            yield pdf_bytes
+
+        mock_response.aiter_bytes = mock_aiter_bytes
+        mock_response.aclose = AsyncMock()
+
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client.build_request = MagicMock(return_value="mock_request")
+        mock_client.send = AsyncMock(return_value=mock_response)
+        mock_client.aclose = AsyncMock()
         mock_client_cls.return_value = mock_client
 
         url = "http://intranet.ifs.edu.br/publicacoes/relat/cert.wsp?x=1"
@@ -249,7 +271,7 @@ class TestTunnelHappyPath:
         )
         assert response.status_code == 200
         # Verificar que os headers nao foram repassados ao upstream
-        call_kwargs = mock_client.get.call_args
+        call_kwargs = mock_client.build_request.call_args
         upstream_headers = call_kwargs.kwargs.get("headers", {})
         assert "referer" not in {k.lower() for k in upstream_headers}
         assert "cookie" not in {k.lower() for k in upstream_headers}

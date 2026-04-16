@@ -101,7 +101,7 @@ class RateLimiter:
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self._requests: dict[str, list[float]] = {}
-        self._lock = asyncio.Lock()
+        self._locks: dict[str, asyncio.Lock] = {}
 
     async def check(self, key: str) -> bool:
         """Verifica se a chave esta dentro do limite de requisicoes.
@@ -115,7 +115,12 @@ class RateLimiter:
         Returns:
             True se permitido, False se bloqueado.
         """
-        async with self._lock:
+        lock = self._locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[key] = lock
+
+        async with lock:
             now = time.time()
             cutoff = now - self.window_seconds
 
@@ -128,9 +133,11 @@ class RateLimiter:
 
             # Verificar limite
             if len(self._requests[key]) >= self.max_requests:
-                log.debug(
-                    f"Rate limit atingido para '{key[:20]}...': "
-                    f"{len(self._requests[key])}/{self.max_requests}"
+                log.warning(
+                    "Rate limit atingido (429)",
+                    key_prefix=f"{key[:20]}...",
+                    current=len(self._requests[key]),
+                    max=self.max_requests,
                 )
                 return False
 

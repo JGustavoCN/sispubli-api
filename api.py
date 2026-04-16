@@ -29,8 +29,9 @@ from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from logger import logger
@@ -46,6 +47,9 @@ from security import (
 )
 
 log = logger.bind(module=__name__)
+
+# Esquema de autenticação para o Swagger UI reconhecer e adicionar o cadeado
+security_scheme = HTTPBearer(auto_error=False)
 
 
 # ===========================================================================
@@ -383,7 +387,10 @@ def _sanitizar_cpf_resposta(certificados: list[dict]) -> list[dict]:
         502: {"model": ErrorResponse, "description": "Sispubli fora do ar"},
     },
 )
-async def listar_certificados(request: Request):
+async def listar_certificados(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security_scheme),  # noqa: B008
+):
     """Lista certificados do usuario autenticado via Bearer token.
 
     O CPF e descriptografado do token, enviado ao scraper, e as URLs
@@ -391,14 +398,16 @@ async def listar_certificados(request: Request):
     Nenhum CPF real aparece na resposta.
 
     Args:
-        request: Starlette Request com header Authorization: Bearer <token>.
+        request: Starlette Request para obter IP.
+        credentials: Token Bearer extraido automaticamente.
 
     Returns:
         JSON com {data: {usuario_id, total, certificados}}.
     """
     # --- Extrair token ---
-    raw_token = _extrair_bearer_token(request)
-    if raw_token is None:
+    raw_token = _extrair_bearer_token(request) if not credentials else credentials.credentials
+
+    if not raw_token:
         return JSONResponse(
             status_code=401,
             content={
@@ -688,24 +697,22 @@ async def tunnel_pdf(ticket: str):
     # --- Camada 4: Semaphore de concorrencia ---
     async with _tunnel_semaphore:
         try:
-            # --- Camada 5: User-Agent consistente ---
-            async with httpx.AsyncClient(
-                timeout=30.0,
-                follow_redirects=True,
-            ) as http_client:
-                upstream_response = await http_client.get(
-                    url,
-                    headers={
-                        "User-Agent": TUNNEL_USER_AGENT,
-                    },
-                )
+            client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+            request_obj = client.build_request(
+                "GET", url, headers={"User-Agent": TUNNEL_USER_AGENT}
+            )
 
-            # --- Camada 6: Content-Length guard ---
+            # Use send with stream=True to read headers before starting the payload generator
+            upstream_response = await client.send(request_obj, stream=True)
+
+            # --- Camada 6: Content-Length guard antecipado ---
             content_length = int(upstream_response.headers.get("content-length", 0))
             if content_length > MAX_PDF_SIZE:
                 log.warning(
                     f"PDF rejeitado por tamanho: {content_length} bytes (max {MAX_PDF_SIZE})"
                 )
+                await upstream_response.aclose()
+                await client.aclose()
                 return JSONResponse(
                     status_code=413,
                     content={
@@ -716,12 +723,44 @@ async def tunnel_pdf(ticket: str):
                     },
                 )
 
-            # --- Camada 7: Streaming isolado ---
-            content_type = upstream_response.headers.get("content-type", "application/pdf")
+            # Verifica falha de upstream
+            if upstream_response.status_code >= 400:
+                log.error(f"Erro no upstream: status {upstream_response.status_code}")
+                await upstream_response.aclose()
+                await client.aclose()
+                return JSONResponse(
+                    status_code=502,
+                    content={
+                        "error": {
+                            "code": "bad_gateway",
+                            "message": "Falha ao obter arquivo original do Sispubli.",
+                        }
+                    },
+                )
 
-            log.info(f"PDF streamado com sucesso ({content_length} bytes)")
-            return Response(
-                content=upstream_response.content,
+            # --- Camada 7: Streaming isolado (Byte Streaming Limiter) ---
+            async def stream_generator():
+                total_bytes = 0
+                try:
+                    async for chunk in upstream_response.aiter_bytes(chunk_size=65536):
+                        total_bytes += len(chunk)
+                        if total_bytes > MAX_PDF_SIZE:
+                            log.warning(
+                                f"PDF truncado ativamente por limite excedido: "
+                                f"{total_bytes} bytes streamados"
+                            )
+                            break
+                        yield chunk
+                finally:
+                    await upstream_response.aclose()
+                    await client.aclose()
+
+            content_type = upstream_response.headers.get("content-type", "application/pdf")
+            log.info(f"PDF streamado com sucesso (informado {content_length} bytes)")
+
+            return StreamingResponse(
+                stream_generator(),
+                status_code=200,
                 media_type=content_type,
                 headers={
                     "Content-Disposition": "inline; filename=certificado.pdf",

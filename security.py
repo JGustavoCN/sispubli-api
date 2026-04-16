@@ -21,8 +21,12 @@ import os
 import re
 
 from cryptography.fernet import Fernet
+from dotenv import load_dotenv
 
 from logger import logger
+
+# Garante que as variáveis do .env (como FERNET_SECRET_KEY) estejam disponíveis
+load_dotenv()
 
 log = logger.bind(module=__name__)
 
