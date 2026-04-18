@@ -52,6 +52,12 @@ Para blindar infraestrutura IP num site federeal governamental frágil, aplique 
 - **Conventional Commits:** Assinaturas obrigatórias: `feat:`, `fix:`, `docs:`, `test:`, `chore:`. (E analise todo o quadro antes de commítar).
 - **Ferramental Local:** Todo o enquadramento de formato diário invoca `Ruff`, roteado elegantemente pelo `Makefile`.
 
+## 6. Infraestrutura e Deploy (Vercel)
+
+- **Otimização de Build:** O projeto utiliza `.vercelignore` para evitar o upload de arquivos de teste (incluindo `.har`), documentos e logs para a produção, reduzindo o tempo de build.
+- **Builds Legados:** O arquivo `vercel.json` mantém o campo `builds` por pragmatismo. A migração para a pasta `/api/` (Zero Config) não é prioritária no momento.
+- **Higiene via Git:** O arquivo `.gitattributes` garante a normalização de finais de linha (LF) e usa `export-ignore` para releases limpos.
+
 ## Estrutura de Diretórios Atual
 
 ```bash
