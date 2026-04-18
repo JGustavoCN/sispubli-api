@@ -124,6 +124,17 @@ Ao requerer com dados válidos, eis o retorno esperado via Pydantic:
 
 ---
 
+## 🔒 Segurança e Blindagem PII (Zero Trust)
+
+O projeto prioriza a segurança dos dados dos usuários (LGPD) através de uma arquitetura "Zero PII Leak":
+
+- **Validação Matemática (Módulo 11)**: Todo CPF é validado matematicamente. Entradas inválidas retornam `422 Unprocessable Entity` imediatamente.
+- **Sanitização de Mocks (VCR)**: Hooks de filtragem garantem que CPFs (em URIs, Bodies ou Headers como `Referer`) nunca sejam persistidos nos cassettes de teste.
+- **Auditoria Dinâmica**: Script `make audit` integrado ao `pre-commit` que bloqueia o fluxo caso detecte segredos ou CPFs reais no repositório.
+- **Anti-Enumeração**: Rate limiting agressivo na autenticação para mitigar ataques de força bruta.
+
+---
+
 ## 📦 Implantação e Deployment (Serverless / Docker)
 
 ### Via Vercel

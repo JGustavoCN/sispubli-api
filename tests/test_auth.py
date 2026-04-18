@@ -61,7 +61,8 @@ class TestAuthHappyPath:
 
     def test_login_normaliza_cpf_com_pontuacao(self):
         """CPF com pontuacao deve ser aceito e normalizado."""
-        response = client.post("/api/auth/token", json={"cpf": "123.456.789-00"})
+        # Usamos um CPF matematicamente valido para garantir o 200
+        response = client.post("/api/auth/token", json={"cpf": "748.392.100-55"})
         assert response.status_code == 200
         data = response.json()
         assert "access_token" in data
@@ -75,27 +76,32 @@ class TestAuthHappyPath:
 class TestAuthCpfValidation:
     """Testes para rejeicao de CPFs invalidos."""
 
-    def test_cpf_com_letras_retorna_400(self):
-        """CPF com caracteres nao numericos (apos normalizacao) retorna 400."""
+    def test_cpf_com_letras_retorna_422(self):
+        """CPF com caracteres nao numericos (apos normalizacao) retorna 422."""
         response = client.post("/api/auth/token", json={"cpf": "abc"})
-        assert response.status_code == 400
+        assert response.status_code == 422
         data = response.json()
         assert data["error"]["code"] == "invalid_cpf"
 
-    def test_cpf_curto_retorna_400(self):
-        """CPF com menos de 11 digitos retorna 400."""
+    def test_cpf_curto_retorna_422(self):
+        """CPF com menos de 11 digitos retorna 422."""
         response = client.post("/api/auth/token", json={"cpf": "1234567890"})
-        assert response.status_code == 400
+        assert response.status_code == 422
 
-    def test_cpf_longo_retorna_400(self):
-        """CPF com mais de 11 digitos retorna 400."""
+    def test_cpf_longo_retorna_422(self):
+        """CPF com mais de 11 digitos retorna 422."""
         response = client.post("/api/auth/token", json={"cpf": "748392100551"})
-        assert response.status_code == 400
+        assert response.status_code == 422
 
-    def test_cpf_vazio_retorna_400(self):
-        """CPF vazio retorna 400."""
+    def test_cpf_vazio_retorna_422(self):
+        """CPF vazio retorna 422."""
         response = client.post("/api/auth/token", json={"cpf": ""})
-        assert response.status_code == 400
+        assert response.status_code == 422
+
+    def test_cpf_matematicamente_invalido_retorna_422(self):
+        """CPF com 11 digitos mas invalido no Modulo 11 retorna 422."""
+        response = client.post("/api/auth/token", json={"cpf": "11111111111"})
+        assert response.status_code == 422
 
 
 # ===================================================================

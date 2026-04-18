@@ -45,6 +45,7 @@ from security import (
     ler_token_sessao,
     normalizar_cpf,
 )
+from validators import validar_cpf
 
 log = logger.bind(module=__name__)
 
@@ -59,8 +60,7 @@ security_scheme = HTTPBearer(auto_error=False)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Ativa sistemas de seguranca e valida configuracoes criticas.
-    """
+    """Ativa sistemas de seguranca e valida configuracoes criticas."""
     # 1. Ativar interceptacao de logs (httpx, uvicorn -> Loguru sanitizado)
     aplicar_interceptor()
 
@@ -310,14 +310,14 @@ async def auth_token(body: TokenRequest, request: Request):
 
     # --- Normalizacao e validacao do CPF ---
     cpf = normalizar_cpf(body.cpf)
-    if not cpf.isdigit() or len(cpf) != 11:
-        log.warning(f"CPF invalido recebido no auth: '{cpf[:3]}...' (len={len(cpf)})")
+    if not validar_cpf(cpf):
+        log.warning(f"CPF matematicamente invalido no auth: '{cpf[:3]}...'")
         return JSONResponse(
-            status_code=400,
+            status_code=422,
             content={
                 "error": {
                     "code": "invalid_cpf",
-                    "message": "CPF deve conter exatamente 11 digitos numericos.",
+                    "message": "CPF invalido",
                 }
             },
         )
@@ -372,7 +372,7 @@ def _sanitizar_cpf_resposta(certificados: list[dict]) -> list[dict]:
     for cert in certificados:
         cert_limpo = {}
         for key, value in cert.items():
-            #id_unico ja e um hash seguro com SALT, sanitizacao o corromperia
+            # id_unico ja e um hash seguro com SALT, sanitizacao o corromperia
             if key == "id_unico":
                 cert_limpo[key] = value
             elif isinstance(value, str):
@@ -544,14 +544,14 @@ def buscar_certificados(cpf: str):
     log.info(f"Requisicao recebida: GET /api/certificados/{cpf[:3]}***")
 
     # --- Validacao do CPF ---
-    if not cpf.isdigit() or len(cpf) != 11:
-        log.warning(f"CPF invalido recebido: '{cpf[:3]}...' (len={len(cpf)})")
+    if not validar_cpf(cpf):
+        log.warning(f"CPF matematicamente invalido recebido: '{cpf[:3]}...'")
         return JSONResponse(
-            status_code=400,
+            status_code=422,
             content={
                 "error": {
                     "code": "invalid_cpf",
-                    "message": "CPF deve conter exatamente 11 digitos numericos.",
+                    "message": "CPF invalido",
                 }
             },
         )

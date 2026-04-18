@@ -1,64 +1,57 @@
-import os
-import subprocess
-import pytest
-from unittest.mock import patch, MagicMock
-
-# Vamos importar o script. Como ele esta em scripts/, precisamos garantir que o path esteja correto
-# Ou podemos rodar via subprocesso nos testes de integracao do auditor
 from scripts.audit_pii import perform_audit
 
-@pytest.fixture
-def mock_env(monkeypatch):
-    monkeypatch.setenv("CPF_TESTE", "11122233344")
-    monkeypatch.setenv("FERNET_SECRET_KEY", "chave_secreta_fernet")
-    monkeypatch.setenv("HASH_SALT", "sal_do_hash")
 
-@pytest.fixture
-def temp_repo(tmp_path):
-    # Simula um arquivo limpo
-    clean_file = tmp_path / "clean.py"
-    clean_file.write_text("print('hello world')")
-    
-    # Simula arquivo com CPF real (vazamento)
-    leak_cpf = tmp_path / "leak_cpf.py"
-    leak_cpf.write_text("user_cpf = '11122233344'")
-    
-    # Simula arquivo com segredo do .env (vazamento)
-    leak_key = tmp_path / "leak_key.py"
-    leak_key.write_text("key = 'chave_secreta_fernet'")
-    
-    # Simula arquivo com CPF de mock (permitido)
-    mock_file = tmp_path / "mock.py"
-    mock_file.write_text("mock_cpf = '74839210055'")
-    
-    return tmp_path
+def test_audit_detects_leak_in_cassette(tmp_path, monkeypatch):
+    """
+    PROVA DE FALHA: Verifica se o auditor detecta um CPF real formatado
+    dentro de um arquivo simulando um cassette.
+    """
+    # 1. Configurar um CPF 'real' para o teste
+    real_cpf = "12345678909"  # CPF matematicamente válido
+    monkeypatch.setenv("CPF_TESTE", real_cpf)
 
-def test_audit_pii_detects_leaks(temp_repo, mock_env):
-    """Testa se o auditor detecta CPFs e segredos do .env e sinaliza erro."""
-    files = [str(f) for f in temp_repo.glob("*.py")]
-    
-    with patch("subprocess.check_output") as mock_git, \
-         patch("sys.exit") as mock_exit:
-        mock_git.return_value = "\n".join(files).encode("utf-8")
-        
-        # Chamamos com exit_on_fail=True para testar o sys.exit(1)
-        perform_audit(exit_on_fail=True)
-        
-        # Deve ter chamado sys.exit(1) porque criamos arquivos com vazamentos no temp_repo
-        mock_exit.assert_called_once_with(1)
+    # 2. Criar um arquivo na pasta de cassettes simulada com o CPF formatado
+    cassette_dir = tmp_path / "tests" / "cassettes"
+    cassette_dir.mkdir(parents=True)
+    cassette_file = cassette_dir / "leak.yaml"
 
-def test_audit_pii_allows_whitelist(temp_repo, mock_env):
-    """Testa se o auditor ignora o CPF da whitelist e retorna sucesso."""
-    # Criamos apenas o arquivo de mock
-    mock_file = temp_repo / "only_mock.py"
-    mock_file.write_text("cpf = '74839210055'")
-    
-    with patch("subprocess.check_output") as mock_git, \
-         patch("sys.exit") as mock_exit:
-        mock_git.return_value = str(mock_file).encode("utf-8")
-        
-        perform_audit(exit_on_fail=True)
-        
-        # Nao deve chamar sys.exit(1), mas sim sys.exit(0) ou nada dependendo da implementacao
-        # No nosso script atual, ele chama sys.exit(0)
-        mock_exit.assert_called_once_with(0)
+    # O vazamento ocorre com o CPF formatado
+    formatted_cpf = "123.456.789-09"
+    cassette_file.write_text(f"referer: http://link.com?cpf={formatted_cpf}", encoding="utf-8")
+
+    # 3. Mudar o diretório de trabalho para o tmp_path para o script achar o arquivo
+    monkeypatch.chdir(tmp_path)
+
+    # 4. Executar auditoria (não deve sair do processo, apenas retornar o número de problemas)
+    issues = perform_audit(exit_on_fail=False)
+
+    assert issues > 0, "O auditor deveria ter detectado o vazamento do CPF REAL formatado"
+
+
+def test_audit_allows_mock_cpf(tmp_path, monkeypatch):
+    """Verifica se o auditor ignora o CPF de mock oficial."""
+    mock_cpf = "74839210055"
+
+    test_file = tmp_path / "safe.py"
+    test_file.write_text(f"cpf = '{mock_cpf}'", encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+
+    issues = perform_audit(exit_on_fail=False)
+    assert issues == 0, "O auditor não deveria reclamar do CPF de mock oficial"
+
+
+def test_audit_detects_generic_cpf(tmp_path, monkeypatch):
+    """Verifica se o auditor detecta CPFs genéricos de 11 dígitos que não estão na whitelist."""
+    # CPF genérico que não está no .env nem na whitelist
+    random_cpf = "98765432109"
+
+    test_file = tmp_path / "leak_generic.txt"
+    test_file.write_text(f"vazamento: {random_cpf}", encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    # Precisamos garantir que não haja CPF_TESTE no env para este teste disparar a regex genérica
+    monkeypatch.delenv("CPF_TESTE", raising=False)
+
+    issues = perform_audit(exit_on_fail=False)
+    assert issues > 0, "O auditor deveria ter detectado o CPF genérico via regex"

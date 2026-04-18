@@ -1,8 +1,9 @@
 # Makefile — Sispubli API
 # Gerenciador: uv | Linter/Formatter: ruff | Testes: pytest + coverage
 
-.PHONY: help install format lint lint-fix test test-v test-e2e test-tunnel cov-html serve run \
-        pre-commit docker-build docker-run clean check audit docs-check secrets-scan secrets-baseline
+.PHONY: help install format lint lint-fix test test-v test-e2e test-tunnel update-mocks monitor \
+        cov-html serve run pre-commit docker-build docker-run clean check audit docs-check \
+        secrets-scan secrets-baseline
 
 # Alvo padrão
 all: help
@@ -18,7 +19,9 @@ help:
 	@echo "  make test         - Testes + cobertura (pytest-cov)"
 	@echo "  make test-v       - Testes verbose com logs"
 	@echo "  make test-tunnel  - Testes especificos do tunel de PDF"
-	@echo "  make test-e2e     - Testes E2E (Sispubli real)"
+	@echo "  make test-e2e     - Testes E2E (Mocks Offline / Cassettes)"
+	@echo "  make update-mocks - Regrava cassettes HTTP (requer rede e .env)"
+	@echo "  make monitor      - Health check real (Sentinela) contra o Sispubli"
 	@echo "  make cov-html     - Gera relatorio de cobertura em HTML"
 	@echo "  make serve        - Sobe API REST (uvicorn --reload)"
 	@echo "  make run          - Executa scraper no terminal"
@@ -55,7 +58,16 @@ test-tunnel:
 	uv run pytest tests/test_tunnel.py tests/test_tunnel_e2e.py -v
 
 test-e2e:
-	uv run pytest -v --tb=short -m e2e --no-header --override-ini="addopts="
+	@echo "Rodando testes E2E em modo Playback (Offline)..."
+	uv run pytest -v --tb=short -m e2e --no-header --record-mode=none
+
+update-mocks:
+	@echo "⚠️  REGRAVANDO CASSETTES: Isso requer CPF_TESTE e NOME_TESTE no .env ⚠️"
+	uv run pytest -v -m e2e --record-mode=rewrite
+
+monitor:
+	@echo "🕵️  Sentinela: Verificando integridade real do Sispubli IFS..."
+	uv run python scripts/monitor_sispubli.py
 
 cov-html:
 	uv run pytest --cov=. --cov-report=html
@@ -69,6 +81,7 @@ run:
 pre-commit:
 	uv run pre-commit install
 	uv run pre-commit install --hook-type commit-msg
+	uv run pre-commit install --hook-type pre-push
 	@echo "Hooks instalados com sucesso."
 
 docker-build:

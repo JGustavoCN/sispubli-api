@@ -104,29 +104,37 @@ class TestCertificadosHappyPath:
 class TestCpfValidation:
     """Testes para validacao do CPF na rota."""
 
-    def test_cpf_curto_retorna_400(self):
-        """CPF com menos de 11 digitos deve retornar 400."""
+    def test_cpf_curto_retorna_422(self):
+        """CPF com menos de 11 digitos deve retornar 422."""
         client = TestClient(app)
         response = client.get("/api/certificados/123")
-        assert response.status_code == 400
+        assert response.status_code == 422
         data = response.json()
         assert "error" in data
 
-    def test_cpf_com_letras_retorna_400(self):
-        """CPF com caracteres nao numericos deve retornar 400."""
+    def test_cpf_com_letras_retorna_422(self):
+        """CPF com caracteres nao numericos deve retornar 422."""
         client = TestClient(app)
         response = client.get("/api/certificados/abc12345678")
-        assert response.status_code == 400
+        assert response.status_code == 422
         data = response.json()
         assert "error" in data
 
-    def test_cpf_longo_retorna_400(self):
-        """CPF com mais de 11 digitos deve retornar 400."""
+    def test_cpf_longo_retorna_422(self):
+        """CPF com mais de 11 digitos deve retornar 422."""
         client = TestClient(app)
         response = client.get("/api/certificados/748392100551")
-        assert response.status_code == 400
+        assert response.status_code == 422
         data = response.json()
         assert "error" in data
+
+    def test_cpf_matematicamente_invalido_retorna_422(self):
+        """CPF com 11 digitos mas invalido no Modulo 11 deve retornar 422."""
+        client = TestClient(app)
+        response = client.get("/api/certificados/11111111111")
+        assert response.status_code == 422
+        data = response.json()
+        assert data["error"]["code"] == "invalid_cpf"
 
 
 # ===================================================================
