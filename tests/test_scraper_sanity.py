@@ -16,7 +16,7 @@ def test_extract_data_sanity_mock():
                     <td>15/05/2023</td>
                     <td>1234</td>
                     <td>2023</td>
-                    <td><a href="javascript:abrirCertificado('00000000000', '1', '1234', '2023', '0', '2023', '0')">Download</a></td>
+                    <td><a href="javascript:abrirCertificado('74839210055', '1', '1234', '2023', '0', '2023', '0')">Download</a></td>
                 </tr>
             </table>
         </body>
@@ -32,7 +32,7 @@ def test_extract_data_sanity_mock():
     assert len(data["certificates"]) == 1
     cert = data["certificates"][0]
     assert "Python" in cert["title"]
-    assert cert["params"] == ["00000000000", "1", "1234", "2023", "0", "2023", "0"]
+    assert cert["params"] == ["74839210055", "1", "1234", "2023", "0", "2023", "0"]
 
 
 def test_extract_data_empty_html():

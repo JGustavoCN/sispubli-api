@@ -40,12 +40,12 @@ class TestAuthHappyPath:
 
     def test_login_cpf_valido_retorna_200(self):
         """POST /api/auth/token com CPF valido retorna 200."""
-        response = client.post("/api/auth/token", json={"cpf": "12345678900"})
+        response = client.post("/api/auth/token", json={"cpf": "74839210055"})
         assert response.status_code == 200
 
     def test_login_resposta_contem_access_token(self):
         """Resposta deve conter campo access_token."""
-        response = client.post("/api/auth/token", json={"cpf": "12345678900"})
+        response = client.post("/api/auth/token", json={"cpf": "74839210055"})
         data = response.json()
         assert "access_token" in data
         assert isinstance(data["access_token"], str)
@@ -53,7 +53,7 @@ class TestAuthHappyPath:
 
     def test_login_resposta_contem_session_hash(self):
         """Resposta deve conter campo session_hash (64 chars hex)."""
-        response = client.post("/api/auth/token", json={"cpf": "12345678900"})
+        response = client.post("/api/auth/token", json={"cpf": "74839210055"})
         data = response.json()
         assert "session_hash" in data
         assert isinstance(data["session_hash"], str)
@@ -89,7 +89,7 @@ class TestAuthCpfValidation:
 
     def test_cpf_longo_retorna_400(self):
         """CPF com mais de 11 digitos retorna 400."""
-        response = client.post("/api/auth/token", json={"cpf": "123456789001"})
+        response = client.post("/api/auth/token", json={"cpf": "748392100551"})
         assert response.status_code == 400
 
     def test_cpf_vazio_retorna_400(self):
@@ -135,7 +135,7 @@ class TestAuthRateLimit:
         """Exceder limite de auth deve retornar 429."""
         mock_limiter.check = AsyncMock(return_value=False)
 
-        response = client.post("/api/auth/token", json={"cpf": "12345678900"})
+        response = client.post("/api/auth/token", json={"cpf": "74839210055"})
         assert response.status_code == 429
         data = response.json()
         assert data["error"]["code"] == "rate_limit_exceeded"

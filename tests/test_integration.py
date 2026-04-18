@@ -33,7 +33,7 @@ class TestPydanticSerialization:
     def test_campos_certificado_tipados_corretamente(self, mock_fetch):
         """Cada campo do certificado deve ter o tipo correto."""
         mock_fetch.return_value = {
-            "usuario_id": "***.456.789-**",
+            "usuario_id": "***.392.100-**",
             "total": 1,
             "certificados": [
                 {
@@ -47,7 +47,7 @@ class TestPydanticSerialization:
             ],
         }
 
-        response = client.get("/api/certificados/12345678900")
+        response = client.get("/api/certificados/74839210055")
         data = response.json()
 
         assert response.status_code == 200
@@ -64,7 +64,7 @@ class TestPydanticSerialization:
     def test_url_nula_serializada_corretamente(self, mock_fetch):
         """Certificado com url_download=None deve serializar como null no JSON."""
         mock_fetch.return_value = {
-            "usuario_id": "***.111.222-**",
+            "usuario_id": "***.392.100-**",
             "total": 1,
             "certificados": [
                 {
@@ -78,7 +78,7 @@ class TestPydanticSerialization:
             ],
         }
 
-        response = client.get("/api/certificados/11122233344")
+        response = client.get("/api/certificados/74839210055")
         data = response.json()
 
         cert = data["data"]["certificados"][0]
@@ -88,12 +88,12 @@ class TestPydanticSerialization:
     def test_lista_vazia_de_certificados(self, mock_fetch):
         """Busca sem certificados deve retornar lista vazia e total=0."""
         mock_fetch.return_value = {
-            "usuario_id": "***.000.000-**",
+            "usuario_id": "***.392.100-**",
             "total": 0,
             "certificados": [],
         }
 
-        response = client.get("/api/certificados/00011122233")
+        response = client.get("/api/certificados/74839210055")
         data = response.json()
 
         assert response.status_code == 200
@@ -105,7 +105,7 @@ class TestPydanticSerialization:
     def test_multiplos_certificados_tipos_variados(self, mock_fetch):
         """Resposta com multiplos certificados de tipos diferentes."""
         mock_fetch.return_value = {
-            "usuario_id": "***.456.789-**",
+            "usuario_id": "***.392.100-**",
             "total": 3,
             "certificados": [
                 {
@@ -135,7 +135,7 @@ class TestPydanticSerialization:
             ],
         }
 
-        response = client.get("/api/certificados/12345678900")
+        response = client.get("/api/certificados/74839210055")
         data = response.json()
 
         assert response.status_code == 200
@@ -180,7 +180,7 @@ class TestErrorFormat:
         """Erro 502 deve seguir {error: {code: 'upstream_error', message: '...'}}."""
         mock_fetch.side_effect = Exception("Erro ao acessar pagina inicial: 503")
 
-        response = client.get("/api/certificados/12345678900")
+        response = client.get("/api/certificados/74839210055")
         data = response.json()
 
         assert "error" in data
@@ -192,7 +192,7 @@ class TestErrorFormat:
         """Erro 500 deve seguir {error: {code: 'internal_error', message: '...'}}."""
         mock_fetch.side_effect = ValueError("Erro inesperado no parsing")
 
-        response = client.get("/api/certificados/12345678900")
+        response = client.get("/api/certificados/74839210055")
         data = response.json()
 
         assert "error" in data
@@ -213,7 +213,7 @@ class TestUpstreamErrorClassification:
         """Mensagem 'Erro ao enviar POST' deve ser classificada como upstream."""
         mock_fetch.side_effect = Exception("Erro ao enviar POST: 500")
 
-        response = client.get("/api/certificados/12345678900")
+        response = client.get("/api/certificados/74839210055")
         assert response.status_code == 502
         assert response.json()["error"]["code"] == "upstream_error"
 
@@ -222,7 +222,7 @@ class TestUpstreamErrorClassification:
         """Mensagem 'Erro ao buscar pagina' deve ser classificada como upstream."""
         mock_fetch.side_effect = Exception("Erro ao buscar pagina 2: 404")
 
-        response = client.get("/api/certificados/12345678900")
+        response = client.get("/api/certificados/74839210055")
         assert response.status_code == 502
         assert response.json()["error"]["code"] == "upstream_error"
 
@@ -231,6 +231,6 @@ class TestUpstreamErrorClassification:
         """Mensagem generica nao deve ser classificada como upstream."""
         mock_fetch.side_effect = Exception("Divisao por zero")
 
-        response = client.get("/api/certificados/12345678900")
+        response = client.get("/api/certificados/74839210055")
         assert response.status_code == 500
         assert response.json()["error"]["code"] == "internal_error"

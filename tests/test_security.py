@@ -5,7 +5,7 @@ Cobertura TDD:
     - gerar_token_sessao / ler_token_sessao: Round-trip, TTL, adulteracao
     - gerar_ticket_pdf / ler_ticket_pdf: Round-trip sem TTL, adulteracao
     - derivar_session_hash: Determinismo, pepper obrigatorio
-    - Validacao de tamanho: tokens/tickets > 500 chars rejeitados
+    - Validacao de tamanho: tokens/tickets > 2048 chars rejeitados
     - Normalizacao de CPF: aceita formatos com pontuacao
 """
 
@@ -34,15 +34,15 @@ class TestNormalizarCpf:
 
     def test_cpf_apenas_digitos_mantem(self):
         """CPF com 11 digitos numericos permanece inalterado."""
-        assert normalizar_cpf("12345678900") == "12345678900"
+        assert normalizar_cpf("74839210055") == "74839210055"
 
     def test_cpf_com_pontuacao(self):
-        """CPF formatado (123.456.789-00) e normalizado."""
-        assert normalizar_cpf("123.456.789-00") == "12345678900"
+        """CPF formatado (748.392.100-55) e normalizado."""
+        assert normalizar_cpf("748.392.100-55") == "74839210055"
 
     def test_cpf_com_espacos(self):
         """CPF com espacos e normalizado."""
-        assert normalizar_cpf("123 456 789 00") == "12345678900"
+        assert normalizar_cpf("748 392 100 55") == "74839210055"
 
     def test_cpf_vazio_retorna_vazio(self):
         """CPF vazio retorna string vazia."""
@@ -59,20 +59,20 @@ class TestTokenSessao:
 
     def test_gerar_token_retorna_string_nao_vazia(self):
         """Token gerado deve ser uma string nao vazia."""
-        token = gerar_token_sessao("12345678900")
+        token = gerar_token_sessao("74839210055")
         assert isinstance(token, str)
         assert len(token) > 0
 
     def test_round_trip_retorna_cpf(self):
         """Gerar e ler token deve retornar o CPF original."""
-        cpf = "12345678900"
+        cpf = "74839210055"
         token = gerar_token_sessao(cpf)
         resultado = ler_token_sessao(token)
         assert resultado == cpf
 
     def test_token_expirado_apos_ttl(self):
         """Token deve ser rejeitado apos o TTL de 15 minutos."""
-        cpf = "12345678900"
+        cpf = "74839210055"
         token = gerar_token_sessao(cpf)
 
         # Simula passagem de tempo (16 minutos = 960 segundos)
@@ -86,22 +86,22 @@ class TestTokenSessao:
 
     def test_token_adulterado_rejeita(self):
         """Token com bytes corrompidos deve ser rejeitado."""
-        token = gerar_token_sessao("12345678900")
+        token = gerar_token_sessao("74839210055")
         token_corrompido = token[:-5] + "XXXXX"
         with pytest.raises(InvalidToken):
             ler_token_sessao(token_corrompido)
 
     def test_token_muito_longo_rejeita(self):
-        """Token > 500 caracteres deve ser rejeitado imediatamente."""
-        token_gigante = "A" * 501
+        """Token > 2048 caracteres deve ser rejeitado imediatamente."""
+        token_gigante = "A" * 2049
         with pytest.raises(ValueError, match="Token excede tamanho maximo"):
             ler_token_sessao(token_gigante)
 
     def test_token_normaliza_cpf_com_pontuacao(self):
         """Token gerado com CPF formatado deve retornar CPF limpo."""
-        token = gerar_token_sessao("123.456.789-00")
+        token = gerar_token_sessao("748.392.100-55")
         resultado = ler_token_sessao(token)
-        assert resultado == "12345678900"
+        assert resultado == "74839210055"
 
 
 # ===================================================================
@@ -121,7 +121,7 @@ class TestTicketPdf:
 
     def test_round_trip_retorna_url(self):
         """Gerar e ler ticket deve retornar a URL original."""
-        url = "http://intranet.ifs.edu.br/publicacoes/relat/cert.wsp?tmp.tx_cpf=12345678900"
+        url = "http://intranet.ifs.edu.br/publicacoes/relat/cert.wsp?tmp.tx_cpf=74839210055"
         ticket = gerar_ticket_pdf(url)
         resultado = ler_ticket_pdf(ticket)
         assert resultado == url
@@ -147,8 +147,8 @@ class TestTicketPdf:
             ler_ticket_pdf(ticket_corrompido)
 
     def test_ticket_muito_longo_rejeita(self):
-        """Ticket > 500 caracteres deve ser rejeitado imediatamente."""
-        ticket_gigante = "B" * 501
+        """Ticket > 2048 caracteres deve ser rejeitado imediatamente."""
+        ticket_gigante = "B" * 2049
         with pytest.raises(ValueError, match="Ticket excede tamanho maximo"):
             ler_ticket_pdf(ticket_gigante)
 
@@ -163,7 +163,7 @@ class TestDerivarSessionHash:
 
     def test_hash_retorna_string_hexadecimal(self):
         """Hash deve ser uma string hexadecimal de 64 caracteres."""
-        token = gerar_token_sessao("12345678900")
+        token = gerar_token_sessao("74839210055")
         h = derivar_session_hash(token)
         assert isinstance(h, str)
         assert len(h) == 64
@@ -171,15 +171,15 @@ class TestDerivarSessionHash:
 
     def test_hash_deterministico(self):
         """Mesmo token deve gerar o mesmo hash sempre."""
-        token = gerar_token_sessao("12345678900")
+        token = gerar_token_sessao("74839210055")
         h1 = derivar_session_hash(token)
         h2 = derivar_session_hash(token)
         assert h1 == h2
 
     def test_tokens_diferentes_geram_hashes_diferentes(self):
         """Tokens de CPFs diferentes devem gerar hashes diferentes."""
-        t1 = gerar_token_sessao("12345678900")
-        t2 = gerar_token_sessao("98765432100")
+        t1 = gerar_token_sessao("74839210055")
+        t2 = gerar_token_sessao("74839210055")
         h1 = derivar_session_hash(t1)
         h2 = derivar_session_hash(t2)
         assert h1 != h2
@@ -188,14 +188,14 @@ class TestDerivarSessionHash:
         """Hash com PEPPER deve diferir de hash sem PEPPER."""
         import hashlib
 
-        token = gerar_token_sessao("12345678900")
+        token = gerar_token_sessao("74839210055")
         hash_sem_pepper = hashlib.sha256(token.encode("utf-8")).hexdigest()
         hash_com_pepper = derivar_session_hash(token)
         assert hash_com_pepper != hash_sem_pepper
 
     def test_mesmo_token_gera_mesmo_session_hash(self):
         """Token replay: reutilizar mesmo token gera mesmo hash (determinismo)."""
-        cpf = "12345678900"
+        cpf = "74839210055"
         token = gerar_token_sessao(cpf)
         hash_1 = derivar_session_hash(token)
         hash_2 = derivar_session_hash(token)

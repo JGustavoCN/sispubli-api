@@ -67,7 +67,7 @@ class TestCertificadosHappyPath:
         }
 
         client = TestClient(app)
-        response = client.get("/api/certificados/12345678900")
+        response = client.get("/api/certificados/74839210055")
 
         assert response.status_code == 200
         data = response.json()
@@ -75,7 +75,7 @@ class TestCertificadosHappyPath:
         assert data["data"]["total"] == 1
         assert len(data["data"]["certificados"]) == 1
 
-        mock_fetch.assert_called_once_with("12345678900")
+        mock_fetch.assert_called_once_with("74839210055")
 
     @patch("api.fetch_all_certificates")
     def test_resposta_contem_estrutura_correta(self, mock_fetch):
@@ -87,7 +87,7 @@ class TestCertificadosHappyPath:
         }
 
         client = TestClient(app)
-        response = client.get("/api/certificados/12345678900")
+        response = client.get("/api/certificados/74839210055")
 
         data = response.json()
         assert "data" in data
@@ -123,7 +123,7 @@ class TestCpfValidation:
     def test_cpf_longo_retorna_400(self):
         """CPF com mais de 11 digitos deve retornar 400."""
         client = TestClient(app)
-        response = client.get("/api/certificados/123456789001")
+        response = client.get("/api/certificados/748392100551")
         assert response.status_code == 400
         data = response.json()
         assert "error" in data
@@ -143,7 +143,7 @@ class TestScraperErrors:
         mock_fetch.side_effect = Exception("Erro ao acessar pagina inicial: 503")
 
         client = TestClient(app)
-        response = client.get("/api/certificados/12345678900")
+        response = client.get("/api/certificados/74839210055")
 
         assert response.status_code == 502
         data = response.json()
@@ -157,7 +157,7 @@ class TestScraperErrors:
         mock_fetch.side_effect = RuntimeError("Algo deu muito errado")
 
         client = TestClient(app)
-        response = client.get("/api/certificados/12345678900")
+        response = client.get("/api/certificados/74839210055")
 
         assert response.status_code == 500
         data = response.json()
@@ -170,7 +170,7 @@ class TestScraperErrors:
         mock_fetch.side_effect = Exception("Token nao encontrado na pagina inicial")
 
         client = TestClient(app)
-        response = client.get("/api/certificados/12345678900")
+        response = client.get("/api/certificados/74839210055")
 
         assert response.status_code == 502
         data = response.json()

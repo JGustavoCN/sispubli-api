@@ -31,7 +31,7 @@ MOCK_PAGE_1 = """
 <body>
 <FORM NAME="form" METHOD="POST" ACTION="indexCertificados.wsp">
   <INPUT NAME="wi.token" VALUE="TOKEN_MOCK_001" TYPE="hidden" />
-  <INPUT NAME="tmp.tx_cpf" VALUE="12345678900" TYPE="hidden" />
+  <INPUT NAME="tmp.tx_cpf" VALUE="74839210055" TYPE="hidden" />
   <table>
     <tr>
       <th>Descricao</th>
@@ -42,7 +42,7 @@ MOCK_PAGE_1 = """
         Participacao no(a) Evento Alpha 2024
       </td>
       <td valign="center" align="center">
-        <a href="javascript:abrirCertificado('12345678900', '1', '100', '200', '0', 2024, 0)">
+        <a href="javascript:abrirCertificado('74839210055', '1', '100', '200', '0', 2024, 0)">
           Imprimir
         </a>
       </td>
@@ -62,7 +62,7 @@ MOCK_PAGE_2 = """
 <body>
 <FORM NAME="form" METHOD="POST" ACTION="indexCertificados.wsp">
   <INPUT NAME="wi.token" VALUE="TOKEN_MOCK_002" TYPE="hidden" />
-  <INPUT NAME="tmp.tx_cpf" VALUE="12345678900" TYPE="hidden" />
+  <INPUT NAME="tmp.tx_cpf" VALUE="74839210055" TYPE="hidden" />
   <table>
     <tr>
       <th>Descricao</th>
@@ -73,7 +73,7 @@ MOCK_PAGE_2 = """
         Participacao no(a) Evento Beta 2024
       </td>
       <td valign="center" align="center">
-        <a href="javascript:abrirCertificado('12345678900', '2', '300', '400', '0', 2024, 0)">
+        <a href="javascript:abrirCertificado('74839210055', '2', '300', '400', '0', 2024, 0)">
           Imprimir
         </a>
       </td>
@@ -108,13 +108,13 @@ class TestMaskCpf:
 
     def test_mask_cpf_formato_correto(self):
         """CPF com 11 digitos deve ser mascarado no formato ***.XXX.XXX-**."""
-        result = mask_cpf("12345678900")
-        assert result == "***.456.789-**"
+        result = mask_cpf("74839210055")
+        assert result == "***.392.100-**"
 
     def test_mask_cpf_outro_cpf(self):
         """Segundo CPF para validar posicoes corretas."""
-        result = mask_cpf("98765432100")
-        assert result == "***.654.321-**"
+        result = mask_cpf("09876543211")
+        assert result == "***.765.432-**"
 
     def test_mask_cpf_curto(self):
         """CPF com menos de 11 digitos retorna string mascarada generica."""
@@ -137,19 +137,19 @@ class TestGenerateCertId:
 
     def test_hash_deterministico(self):
         """Mesmos parametros devem gerar o mesmo hash."""
-        h1 = generate_cert_id("12345678900", "1", "100", "200")
-        h2 = generate_cert_id("12345678900", "1", "100", "200")
+        h1 = generate_cert_id("74839210055", "1", "100", "200")
+        h2 = generate_cert_id("74839210055", "1", "100", "200")
         assert h1 == h2
 
     def test_hash_unicidade(self):
         """Parametros diferentes devem gerar hashes diferentes."""
-        h1 = generate_cert_id("12345678900", "1", "100", "200")
-        h2 = generate_cert_id("12345678900", "1", "100", "201")
+        h1 = generate_cert_id("74839210055", "1", "100", "200")
+        h2 = generate_cert_id("74839210055", "1", "100", "201")
         assert h1 != h2
 
     def test_hash_formato_sha256(self):
         """Hash deve ter 64 caracteres hexadecimais (SHA-256)."""
-        h = generate_cert_id("12345678900", "1", "100", "200")
+        h = generate_cert_id("74839210055", "1", "100", "200")
         assert len(h) == 64
         assert all(c in "0123456789abcdef" for c in h)
 
@@ -160,9 +160,9 @@ class TestGenerateCertId:
         """
         import hashlib
 
-        raw_sem_salt = "12345678900" + "1" + "100" + "200"
+        raw_sem_salt = "74839210055" + "1" + "100" + "200"
         hash_sem_salt = hashlib.sha256(raw_sem_salt.encode()).hexdigest()
-        hash_com_salt = generate_cert_id("12345678900", "1", "100", "200")
+        hash_com_salt = generate_cert_id("74839210055", "1", "100", "200")
         # Podem ser iguais apenas se HASH_SALT for vazio — o que nao deve ocorrer
         # Em ambiente de teste, o SALT padrao e "chave_secreta_padrao"
         assert hash_com_salt != hash_sem_salt
@@ -178,27 +178,27 @@ class TestMontarUrl:
 
     def test_tipo_1_participacao(self):
         """Tipo 1: URL template com {cpf}, sem CPF real."""
-        params = ["12345678900", "1", "100", "200", "0", "2024", "0"]
+        params = ["74839210055", "1", "100", "200", "0", "2024", "0"]
         url = montar_url(params)
         assert url is not None
         assert "certificado_participacao_process.wsp" in url
         assert "tmp.tx_cpf={cpf}" in url
-        assert "12345678900" not in url  # CPF real nao deve aparecer
+        assert "74839210055" not in url  # CPF real nao deve aparecer
         assert "tmp.id_programa=100" in url
         assert "tmp.id_edicao=200" in url
 
     def test_tipo_2_autor(self):
         """Tipo 2: URL template de autor com {cpf}."""
-        params = ["12345678900", "2", "300", "400", "0", "2024", "0"]
+        params = ["74839210055", "2", "300", "400", "0", "2024", "0"]
         url = montar_url(params)
         assert url is not None
         assert "certificado_autor_process.wsp" in url
         assert "tmp.tx_cpf={cpf}" in url
-        assert "12345678900" not in url
+        assert "74839210055" not in url
 
     def test_tipo_3_sub_evento(self):
         """Tipo 3: URL template de participacao em sub-evento."""
-        params = ["12345678900", "3", "100", "200", "55", "2024", "0"]
+        params = ["74839210055", "3", "100", "200", "55", "2024", "0"]
         url = montar_url(params)
         assert url is not None
         assert "certificado_participacao_sub_evento_process.wsp" in url
@@ -207,7 +207,7 @@ class TestMontarUrl:
 
     def test_tipo_4_avaliacao(self):
         """Tipo 4: certificado de avaliacao."""
-        params = ["12345678900", "4", "100", "200", "0", "2024", "0"]
+        params = ["74839210055", "4", "100", "200", "0", "2024", "0"]
         url = montar_url(params)
         assert url is not None
         assert "certificado_avaliacao_process.wsp" in url
@@ -215,24 +215,24 @@ class TestMontarUrl:
 
     def test_tipo_5_avaliacao_programa(self):
         """Tipo 5: certificado de avaliacao de programa."""
-        params = ["12345678900", "5", "100", "200", "0", "2024", "0"]
+        params = ["74839210055", "5", "100", "200", "0", "2024", "0"]
         url = montar_url(params)
         assert url is not None
         assert "certificado_avaliacao_programa_process.wsp" in url
 
     def test_tipo_6_gerado_internamente(self):
         """Tipo 6: certificado interno — usa id_artigo, sem CPF na URL."""
-        params = ["12345678900", "6", "100", "200", "0", "2024", "99"]
+        params = ["74839210055", "6", "100", "200", "0", "2024", "99"]
         url = montar_url(params)
         assert url is not None
         assert "certificado_process.wsp" in url
         assert "tmp.id=99" in url
         assert "tmp.id_programa=100" in url
-        assert "12345678900" not in url
+        assert "74839210055" not in url
 
     def test_tipo_7_orientador(self):
         """Tipo 7: certificado de orientacao com {cpf}."""
-        params = ["12345678900", "7", "100", "200", "0", "2024", "88"]
+        params = ["74839210055", "7", "100", "200", "0", "2024", "88"]
         url = montar_url(params)
         assert url is not None
         assert "certificado_orientador_process.wsp" in url
@@ -241,7 +241,7 @@ class TestMontarUrl:
 
     def test_tipo_8_aluno_voluntario(self):
         """Tipo 8: certificado de aluno voluntario."""
-        params = ["12345678900", "8", "100", "200", "0", "2024", "77"]
+        params = ["74839210055", "8", "100", "200", "0", "2024", "77"]
         url = montar_url(params)
         assert url is not None
         assert "certificado_aluno_voluntario_process.wsp" in url
@@ -250,7 +250,7 @@ class TestMontarUrl:
 
     def test_tipo_9_aluno_bolsista(self):
         """Tipo 9: certificado de aluno bolsista."""
-        params = ["12345678900", "9", "100", "200", "0", "2024", "66"]
+        params = ["74839210055", "9", "100", "200", "0", "2024", "66"]
         url = montar_url(params)
         assert url is not None
         assert "certificado_aluno_bolsista_process.wsp" in url
@@ -258,16 +258,16 @@ class TestMontarUrl:
 
     def test_tipo_10_ministrante_sub_evento(self):
         """Tipo 10: nao usa CPF na URL."""
-        params = ["12345678900", "10", "100", "200", "55", "2024", "0"]
+        params = ["74839210055", "10", "100", "200", "55", "2024", "0"]
         url = montar_url(params)
         assert url is not None
         assert "certificado_ministrante_sub_evento_process.wsp" in url
         assert "tmp.id_sub_evento=55" in url
-        assert "12345678900" not in url
+        assert "74839210055" not in url
 
     def test_tipo_11_coorientador(self):
         """Tipo 11: certificado de coorientacao com {cpf}."""
-        params = ["12345678900", "11", "100", "200", "0", "2024", "44"]
+        params = ["74839210055", "11", "100", "200", "0", "2024", "44"]
         url = montar_url(params)
         assert url is not None
         assert "certificado_coorientador_process.wsp" in url
@@ -276,13 +276,13 @@ class TestMontarUrl:
 
     def test_tipo_desconhecido_retorna_none(self):
         """Tipo nao mapeado deve retornar None."""
-        params = ["12345678900", "99", "100", "200", "0", "2024", "0"]
+        params = ["74839210055", "99", "100", "200", "0", "2024", "0"]
         url = montar_url(params)
         assert url is None
 
     def test_url_usa_template_cpf(self):
         """SEGURANCA: todas as URLs que referenciam CPF devem usar {cpf}, nao o CPF real."""
-        cpf_real = "12345678900"
+        cpf_real = "74839210055"
         for tipo in ["1", "2", "3", "4", "5", "7", "8", "9", "11"]:
             params = [cpf_real, tipo, "100", "200", "55", "2024", "88"]
             url = montar_url(params)
@@ -358,9 +358,9 @@ class TestFetchAllCertificates:
             mock_post_response_2,
         ]
 
-        result = fetch_all_certificates("12345678900")
+        result = fetch_all_certificates("74839210055")
 
-        assert result["usuario_id"] == "***.456.789-**"
+        assert result["usuario_id"] == "***.392.100-**"
         assert result["total"] == 2
         assert len(result["certificados"]) == 2
         assert mock_session.post.call_count == 2
@@ -397,7 +397,7 @@ class TestFetchAllCertificates:
         mock_post_response.text = MOCK_PAGE_2
         mock_session.post.return_value = mock_post_response
 
-        result = fetch_all_certificates("12345678900")
+        result = fetch_all_certificates("74839210055")
 
         assert result["total"] == 1
         assert mock_session.post.call_count == 1
@@ -418,7 +418,7 @@ class TestFetchAllCertificates:
         mock_post.text = MOCK_PAGE_1  # tipo=1, ano=2024
         mock_session.post.return_value = mock_post
 
-        result = fetch_all_certificates("12345678900")
+        result = fetch_all_certificates("74839210055")
 
         assert result["total"] >= 1
         cert = result["certificados"][0]
@@ -443,11 +443,11 @@ class TestFetchAllCertificates:
         mock_post.text = MOCK_PAGE_1
         mock_session.post.return_value = mock_post
 
-        result = fetch_all_certificates("12345678900")
+        result = fetch_all_certificates("74839210055")
 
         for cert in result["certificados"]:
             if cert["url_download"]:
-                assert "12345678900" not in cert["url_download"], (
+                assert "74839210055" not in cert["url_download"], (
                     f"CPF real encontrado na url_download: {cert['url_download']}"
                 )
 
@@ -467,8 +467,8 @@ class TestFetchAllCertificates:
         mock_post.text = MOCK_PAGE_2
         mock_session.post.return_value = mock_post
 
-        result1 = fetch_all_certificates("99988877766")
-        result2 = fetch_all_certificates("99988877766")
+        result1 = fetch_all_certificates("74839210055")
+        result2 = fetch_all_certificates("74839210055")
 
         assert result1 is result2  # mesmo objeto em memoria (cache hit)
         assert mock_session.get.call_count == 1  # GET feito apenas uma vez
@@ -504,7 +504,7 @@ class TestResultStructure:
         mock_post.text = MOCK_PAGE_2
         mock_session.post.return_value = mock_post
 
-        result = fetch_all_certificates("12345678900")
+        result = fetch_all_certificates("74839210055")
 
         assert "usuario_id" in result
         assert "total" in result

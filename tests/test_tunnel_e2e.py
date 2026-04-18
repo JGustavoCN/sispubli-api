@@ -191,7 +191,7 @@ def test_injecao_cpf_no_ticket_unitario(monkeypatch):
     """
     from security import ler_ticket_pdf
 
-    cpf_fake = "11122233344"
+    cpf_fake = "74839210055"
     mock_certs = {
         "usuario_id": "***.222.333-**",
         "total": 1,

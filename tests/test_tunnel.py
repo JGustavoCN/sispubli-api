@@ -307,3 +307,26 @@ class TestTunnelHappyPath:
 
         assert response.status_code == 502
         assert response.json()["error"]["code"] == "fake_pdf"
+
+    @patch("api.ticket_limiter")
+    @patch("api.is_safe_host", return_value=True)
+    @patch("api.httpx.AsyncClient")
+    def test_tunnel_crash_masking(self, mock_client_cls, mock_ssrf, mock_limiter):
+        """Crash inesperado no tunel nao deve vazar o CPF no payload do JSON."""
+        mock_limiter.check = AsyncMock(return_value=True)
+
+        # Simular crash fatal que inclui o CPF na mensagem do erro
+        cpf_teste = "74839210055"
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=Exception(f"Fatal error with CPF {cpf_teste}"))
+        mock_client.aclose = AsyncMock()
+        mock_client_cls.return_value = mock_client
+
+        url = f"http://intranet.ifs.edu.br/cert.wsp?cpf={cpf_teste}"
+        ticket = gerar_ticket_pdf(url)
+        response = client.get(f"/api/pdf/{ticket}")
+
+        assert response.status_code == 500
+        data = response.json()
+        assert cpf_teste not in data["error"]["message"]
+        assert "748********" in data["error"]["message"]
