@@ -42,3 +42,27 @@ repos:
           - ci
           - chore
           - revert
+  # --- Segurança (Scan de Segredos) ---
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: uv.lock
+
+  # --- Hooks Locais (Gatilhos de Teste) ---
+  - repo: local
+    hooks:
+      - id: pytest-unit
+        name: Testes Unitarios (Rapidos)
+        entry: make test
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: pytest-e2e
+        name: Validacao E2E (Sispubli Real)
+        entry: make test-e2e
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

@@ -2,7 +2,7 @@
 # Gerenciador: uv | Linter/Formatter: ruff | Testes: pytest + coverage
 
 .PHONY: help install format lint lint-fix test test-v test-e2e test-tunnel cov-html serve run \
-        pre-commit docker-build docker-run clean check
+        pre-commit docker-build docker-run clean check audit docs-check secrets-scan secrets-baseline
 
 # Alvo padrão
 all: help
@@ -27,6 +27,10 @@ help:
 	@echo "  make docker-run   - Roda container Docker"
 	@echo "  make clean        - Limpa cache e temporarios"
 	@echo "  make check        - Roda lint + test de uma vez"
+	@echo "  make audit        - Auditoria LGPD (procura CPFs reais no codigo)"
+	@echo "  make secrets-scan  - Procura segredos hardcoded (detect-secrets)"
+	@echo "  make secrets-baseline - Gera/Atualiza o baseline de segredos"
+	@echo "  make docs-check   - Verifica integridade da documentacao"
 	@echo "===================================================="
 
 install:
@@ -42,7 +46,7 @@ lint-fix:
 	uv run ruff check . --fix
 
 test:
-	uv run pytest -v
+	uv run pytest -v -m "not e2e"
 
 test-v:
 	uv run pytest -v --tb=long --log-cli-level=DEBUG
@@ -51,7 +55,7 @@ test-tunnel:
 	uv run pytest tests/test_tunnel.py tests/test_tunnel_e2e.py -v
 
 test-e2e:
-	uv run pytest tests/e2e/ -v --tb=short -m e2e --no-header --override-ini="addopts="
+	uv run pytest -v --tb=short -m e2e --no-header --override-ini="addopts="
 
 cov-html:
 	uv run pytest --cov=. --cov-report=html
@@ -73,7 +77,23 @@ docker-build:
 docker-run:
 	docker run -p 8000:8000 --env-file .env sispubli-api
 
-check: lint-fix test
+check: lint-fix test audit
+
+audit:
+	@echo "Iniciando varredura LGPD em busca de CPFs..."
+	uv run python scripts/audit_pii.py
+
+secrets-scan:
+	uv run detect-secrets scan --baseline .secrets.baseline
+
+secrets-baseline:
+	uv run detect-secrets scan . --exclude-files "uv.lock" > .secrets.baseline
+
+docs-check:
+	@echo "Verificando existencia de documentos obrigatorios..."
+	@if not exist docs\SPEC_CONTRA_LOG_CPF.md echo [ERRO] SPEC_CONTRA_LOG_CPF.md ausente && exit 1
+	@if not exist docs\API_CONTRACT.md echo [ERRO] API_CONTRACT.md ausente && exit 1
+	@echo "✅ Documentacao basica OK."
 
 clean:
 	@if exist .pytest_cache rmdir /s /q .pytest_cache
