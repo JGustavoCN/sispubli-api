@@ -17,8 +17,14 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from api import app
+from security import gerar_token_sessao
 
 client = TestClient(app)
+
+
+def _obter_token(cpf: str = "74839210055") -> str:
+    """Gera um token de sessao para testes de integracao."""
+    return gerar_token_sessao(cpf)
 
 
 # ===================================================================
@@ -47,7 +53,8 @@ class TestPydanticSerialization:
             ],
         }
 
-        response = client.get("/api/certificados/74839210055")
+        token = _obter_token()
+        response = client.get("/api/certificados", headers={"Authorization": f"Bearer {token}"})
         data = response.json()
 
         assert response.status_code == 200
@@ -78,7 +85,8 @@ class TestPydanticSerialization:
             ],
         }
 
-        response = client.get("/api/certificados/74839210055")
+        token = _obter_token()
+        response = client.get("/api/certificados", headers={"Authorization": f"Bearer {token}"})
         data = response.json()
 
         cert = data["data"]["certificados"][0]
@@ -93,7 +101,8 @@ class TestPydanticSerialization:
             "certificados": [],
         }
 
-        response = client.get("/api/certificados/74839210055")
+        token = _obter_token()
+        response = client.get("/api/certificados", headers={"Authorization": f"Bearer {token}"})
         data = response.json()
 
         assert response.status_code == 200
@@ -135,7 +144,8 @@ class TestPydanticSerialization:
             ],
         }
 
-        response = client.get("/api/certificados/74839210055")
+        token = _obter_token()
+        response = client.get("/api/certificados", headers={"Authorization": f"Bearer {token}"})
         data = response.json()
 
         assert response.status_code == 200
@@ -155,82 +165,43 @@ class TestPydanticSerialization:
             assert set(cert.keys()) == chaves_esperadas
 
 
-# ===================================================================
-# TESTES: Formato de Erro Padronizado
-# ===================================================================
-
-
 class TestErrorFormat:
     """Valida que todos os erros seguem o padrao {error: {code, message}}."""
 
-    def test_erro_400_formato_padronizado(self):
-        """Erro 400 deve seguir {error: {code: 'invalid_cpf', message: '...'}}."""
-        response = client.get("/api/certificados/123")
+    def test_acesso_negado_sem_token(self):
+        """Acesso sem token ou com token invalido deve retornar 401."""
+        # 422 Unprocessable Entity devido a validacao Pydantic (TokenRequest) no /api/auth/token
+        # Ou 401 se tentar direto no certificados.
+        # Aqui testamos a rota de listagem sem token para garantir erro de seguranca.
+        response = client.get("/api/certificados", headers={"Authorization": "Bearer LIXO"})
         data = response.json()
 
+        assert response.status_code == 401
         assert "error" in data
-        assert "code" in data["error"]
-        assert "message" in data["error"]
-        assert data["error"]["code"] == "invalid_cpf"
-        assert isinstance(data["error"]["message"], str)
-        assert len(data["error"]["message"]) > 0
+        assert data["error"]["code"] == "invalid_token"
 
     @patch("api.fetch_all_certificates")
     def test_erro_502_formato_padronizado(self, mock_fetch):
         """Erro 502 deve seguir {error: {code: 'upstream_error', message: '...'}}."""
-        mock_fetch.side_effect = Exception("Erro ao acessar pagina inicial: 503")
+        # Na nova rota, simulamos ConnectionError que mapeia para 502
+        mock_fetch.side_effect = ConnectionError("Sispubli timeout")
 
-        response = client.get("/api/certificados/74839210055")
+        token = _obter_token()
+        response = client.get("/api/certificados", headers={"Authorization": f"Bearer {token}"})
         data = response.json()
 
-        assert "error" in data
+        assert response.status_code == 502
         assert data["error"]["code"] == "upstream_error"
         assert "Sispubli" in data["error"]["message"]
 
     @patch("api.fetch_all_certificates")
     def test_erro_500_formato_padronizado(self, mock_fetch):
         """Erro 500 deve seguir {error: {code: 'internal_error', message: '...'}}."""
-        mock_fetch.side_effect = ValueError("Erro inesperado no parsing")
+        mock_fetch.side_effect = ValueError("Erro inesperado")
 
-        response = client.get("/api/certificados/74839210055")
+        token = _obter_token()
+        response = client.get("/api/certificados", headers={"Authorization": f"Bearer {token}"})
         data = response.json()
 
-        assert "error" in data
-        assert data["error"]["code"] == "internal_error"
-        assert "interno" in data["error"]["message"].lower()
-
-
-# ===================================================================
-# TESTES: Classificacao de Erros Upstream
-# ===================================================================
-
-
-class TestUpstreamErrorClassification:
-    """Valida que diferentes mensagens de erro do scraper sao classificadas."""
-
-    @patch("api.fetch_all_certificates")
-    def test_erro_ao_enviar_post_e_upstream(self, mock_fetch):
-        """Mensagem 'Erro ao enviar POST' deve ser classificada como upstream."""
-        mock_fetch.side_effect = Exception("Erro ao enviar POST: 500")
-
-        response = client.get("/api/certificados/74839210055")
-        assert response.status_code == 502
-        assert response.json()["error"]["code"] == "upstream_error"
-
-    @patch("api.fetch_all_certificates")
-    def test_erro_ao_buscar_pagina_e_upstream(self, mock_fetch):
-        """Mensagem 'Erro ao buscar pagina' deve ser classificada como upstream."""
-        mock_fetch.side_effect = Exception("Erro ao buscar pagina 2: 404")
-
-        response = client.get("/api/certificados/74839210055")
-        assert response.status_code == 502
-        assert response.json()["error"]["code"] == "upstream_error"
-
-    @patch("api.fetch_all_certificates")
-    def test_erro_generico_nao_e_upstream(self, mock_fetch):
-        """Mensagem generica nao deve ser classificada como upstream."""
-        mock_fetch.side_effect = Exception("Divisao por zero")
-
-        response = client.get("/api/certificados/74839210055")
         assert response.status_code == 500
-        assert response.json()["error"]["code"] == "internal_error"
+        assert data["error"]["code"] == "internal_error"

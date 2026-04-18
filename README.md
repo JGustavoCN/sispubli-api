@@ -100,22 +100,33 @@ Garante a conectividade imediata do container e instâncias Serverless, como a V
 
 - **Response HTTP 200**: `{"status": "API do Sispubli rodando"}`
 
-### `GET /api/certificados/{cpf}`
+### `POST /api/auth/token` (Login)
 
-Extrai os relatórios atestando o número único, título, e URLs montados de extração pro documento .wsp .
+Gera um token de sessão seguro (Fernet) com validade de 15 minutos para um CPF específico. O CPF é validado e criptografado.
 
-Ao requerer com dados válidos, eis o retorno esperado via Pydantic:
+- **Request Body**: `{"cpf": "74839210055"}`
+- **Response HTTP 200**: `{"access_token": "...", "session_hash": "..."}`
+
+### `GET /api/certificados` (Listagem Segura)
+
+Lista todos os certificados do usuário autenticado. Utiliza o padrão **URL Template/Ticket** para os links de download (os PDFs são servidos por um túnel criptografado em `/api/pdf/{ticket}`).
+
+- **Header**: `Authorization: Bearer <seu_token>`
+- **Response HTTP 200**:
 
 ```json
 {
   "data": {
-    "usuario_id": "109*********0",
+    "usuario_id": "***.392.100-**",
     "total": 3,
     "certificados": [
       {
-         "id_unico": "hash_secreto_7020fb4532c",
-         "titulo": "Monitoria da Disciplina Estrutura de Dados 2011.1",
-         "url": "http://intranet.ifs.edu.br/publicacoes/download..."
+         "id_unico": "hash_sha256_do_certificado",
+         "titulo": "Participação no(a) SEPEX 2023",
+         "url_download": "/api/pdf/ticket_criptografado_aqui",
+         "ano": 2023,
+         "tipo_codigo": 1,
+         "tipo_descricao": "Participação"
       }
     ]
   }

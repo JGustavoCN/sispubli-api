@@ -6,7 +6,7 @@ Expoe o motor de extracao de certificados como endpoints HTTP.
 Rotas:
     GET  /                        : Health check
     POST /api/auth/token          : Login — gera token de sessao
-    GET  /api/certificados/{cpf}  : Busca certificados (DEPRECATED)
+    GET  /api/certificados        : Lista certificados (Seguro, via Bearer Token)
 
 Seguranca:
     - Fail Fast em producao: HASH_SALT e FERNET_SECRET_KEY obrigatorios.
@@ -237,23 +237,6 @@ app = FastAPI(
     version="1.1.0",
     lifespan=lifespan,
 )
-
-# ---------------------------------------------------------------------------
-# Mensagens de erro conhecidas que indicam falha no Sispubli (upstream)
-# ---------------------------------------------------------------------------
-
-UPSTREAM_ERROR_PATTERNS = [
-    "Erro ao acessar",
-    "Erro ao enviar POST",
-    "Erro ao buscar pagina",
-    "Token nao encontrado",
-]
-
-
-def _is_upstream_error(message: str) -> bool:
-    """Verifica se a mensagem de erro indica falha no Sispubli."""
-    return any(pattern in message for pattern in UPSTREAM_ERROR_PATTERNS)
-
 
 # ===================================================================
 # ROTAS
@@ -511,94 +494,6 @@ async def listar_certificados(
     response.headers["Cache-Control"] = "public, s-maxage=600"
     response.headers["Vary"] = "Authorization"
     return response
-
-
-@app.get(
-    "/api/certificados/{cpf}",
-    response_model=CertificadosResponse,
-    responses={
-        400: {"model": ErrorResponse, "description": "CPF invalido"},
-        502: {"model": ErrorResponse, "description": "Sispubli fora do ar"},
-        500: {"model": ErrorResponse, "description": "Erro interno"},
-    },
-)
-def buscar_certificados(cpf: str):
-    """Busca todos os certificados disponiveis para um CPF.
-
-    O CPF e validado, enviado ao Sispubli e nunca retornado em texto claro.
-    O campo `url_download` de cada certificado contem `{cpf}` como placeholder
-    — o cliente deve substituir pelo CPF real antes de acessar.
-
-    Args:
-        cpf: CPF do titular (apenas numeros, 11 digitos).
-
-    Returns:
-        JSON com a estrutura:
-        {"data": {"usuario_id": "...", "total": N, "certificados": [...]}}
-
-    Raises:
-        400: CPF com formato invalido.
-        502: Sispubli fora do ar ou com erro.
-        500: Erro inesperado interno.
-    """
-    log.info(f"Requisicao recebida: GET /api/certificados/{cpf[:3]}***")
-
-    # --- Validacao do CPF ---
-    if not validar_cpf(cpf):
-        log.warning(f"CPF matematicamente invalido recebido: '{cpf[:3]}...'")
-        return JSONResponse(
-            status_code=422,
-            content={
-                "error": {
-                    "code": "invalid_cpf",
-                    "message": "CPF invalido",
-                }
-            },
-        )
-
-    # --- Chamada ao scraper ---
-    try:
-        log.info("Iniciando busca de certificados para CPF valido")
-        resultado_raw = fetch_all_certificates(cpf)
-        # Deepcopy fundamental para nao 'envenenar' o cache do scraper com tickets/mascaras
-        resultado = copy.deepcopy(resultado_raw)
-
-        # --- Transformar resposta e converter para tickets ---
-        certs = resultado.get("certificados", [])
-        certs_com_tickets = _substituir_urls_por_tickets(certs, cpf)
-        certs_limpos = _sanitizar_cpf_resposta(certs_com_tickets)
-
-        resultado["certificados"] = certs_limpos
-
-        log.info(f"Busca concluida: {resultado['total']} certificados encontrados")
-        return {"data": resultado}
-
-    except Exception as e:
-        error_message = str(e)
-        log.error(f"Erro durante busca de certificados: {error_message}")
-
-        if _is_upstream_error(error_message):
-            log.error("Classificado como erro de upstream (Sispubli)")
-            return JSONResponse(
-                status_code=502,
-                content={
-                    "error": {
-                        "code": "upstream_error",
-                        "message": f"Falha ao acessar o Sispubli: {error_message}",
-                    }
-                },
-            )
-
-        log.error("Classificado como erro interno inesperado")
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": {
-                    "code": "internal_error",
-                    "message": f"Erro interno do servidor: {error_message}",
-                }
-            },
-        )
 
 
 # ===================================================================
