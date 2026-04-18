@@ -30,7 +30,8 @@ from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import Depends, FastAPI, Query, Request
+from fastapi import Depends, FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
@@ -241,6 +242,27 @@ app = FastAPI(
 )
 
 
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """Middleware global para seguranca e politica de cache.
+
+    1. Adiciona X-Content-Type-Options: nosniff
+    2. Garante no-store em qualquer erro (4xx/5xx) para evitar vazamento de informacao
+       ou cache indevido de falhas na CDN da Vercel.
+    """
+    response = await call_next(request)
+
+    # Adicionar nosniff globalmente por seguranca (RFC 7034)
+    if "X-Content-Type-Options" not in response.headers:
+        response.headers["X-Content-Type-Options"] = "nosniff"
+
+    # Trava de seguranca Zero Leak: Erros nunca devem ser cacheados em CDNs
+    if response.status_code >= 400:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+
+    return response
+
+
 async def _check_upstream_connectivity() -> bool:
     """Valida se o Sispubli (IFS) está respondendo.
 
@@ -266,7 +288,7 @@ async def health_check():
     env_vars = ["HASH_SALT", "FERNET_SECRET_KEY", "SECRET_PEPPER"]
     is_secure = all(os.environ.get(v) for v in env_vars)
 
-    return {
+    response_data = {
         "status": "online",
         "environment": os.environ.get("ENVIRONMENT", "development"),
         "version": app.version,
@@ -274,6 +296,10 @@ async def health_check():
         "security_configured": is_secure,
         "sispubli_online": await _check_upstream_connectivity(),
     }
+
+    response = JSONResponse(content=jsonable_encoder(response_data))
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 
 # ===================================================================
@@ -337,7 +363,9 @@ async def auth_token(body: TokenRequest, request: Request):
     session_hash = derivar_session_hash(token)
 
     log.info(f"Token de sessao gerado com sucesso (hash: {session_hash[:16]}...)")
-    return {"access_token": token, "session_hash": session_hash}
+    response = JSONResponse(content={"access_token": token, "session_hash": session_hash})
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 
 # ===================================================================
@@ -405,9 +433,6 @@ def _sanitizar_cpf_resposta(certificados: list[dict]) -> list[dict]:
 )
 async def listar_certificados(
     request: Request,
-    session: str | None = Query(
-        None, description="Parâmetro legacy usado em bypass SSR (caso falhe o Authorization header)"
-    ),
     credentials: HTTPAuthorizationCredentials = Depends(security_scheme),  # noqa: B008
 ):
     """Lista certificados do usuario autenticado via Bearer token.
@@ -519,7 +544,8 @@ async def listar_certificados(
     }
 
     response = JSONResponse(content=response_data)
-    response.headers["Cache-Control"] = "public, s-maxage=600"
+    # Cache privado no cliente (App/Browser) por 5 minutos
+    response.headers["Cache-Control"] = "private, max-age=300, must-revalidate"
     response.headers["Vary"] = "Authorization"
     return response
 
@@ -720,7 +746,7 @@ async def tunnel_pdf(ticket: str):
                 media_type="application/pdf",
                 headers={
                     "Content-Disposition": 'inline; filename="certificado.pdf"',
-                    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                    "Cache-Control": "public, s-maxage=86400, stale-while-revalidate=86400",
                     "X-Content-Type-Options": "nosniff",
                 },
             )

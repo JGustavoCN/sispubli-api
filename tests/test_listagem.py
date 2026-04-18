@@ -163,7 +163,7 @@ class TestListagemHappyPath:
 
     @patch("api.fetch_all_certificates")
     def test_headers_cache_control(self, mock_fetch):
-        """Resposta deve conter headers de cache corretos."""
+        """Resposta deve conter headers de cache corretos (private por 5 min)."""
         mock_fetch.return_value = MOCK_SCRAPER_RESULT
         token = gerar_token_sessao("74839210055")
 
@@ -171,5 +171,7 @@ class TestListagemHappyPath:
             "/api/certificados",
             headers={"Authorization": f"Bearer {token}"},
         )
-        assert "s-maxage=600" in response.headers.get("cache-control", "")
+        cache_control = response.headers.get("cache-control", "")
+        assert "private" in cache_control
+        assert "max-age=300" in cache_control
         assert "Authorization" in response.headers.get("vary", "")

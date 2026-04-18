@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -12,7 +12,7 @@ from api import app
 class TestHealthCheck:
     """Testes para a rota de health check."""
 
-    @patch("api._check_upstream_connectivity")
+    @patch("api._check_upstream_connectivity", new_callable=AsyncMock)
     def test_health_check_status_200(self, mock_check):
         """GET / deve retornar 200 independente do upstream."""
         mock_check.return_value = True
@@ -20,7 +20,7 @@ class TestHealthCheck:
         response = client.get("/")
         assert response.status_code == 200
 
-    @patch("api._check_upstream_connectivity")
+    @patch("api._check_upstream_connectivity", new_callable=AsyncMock)
     def test_health_check_full_schema(self, mock_check):
         """GET / deve retornar JSON com todos os campos do modelo HealthResponse."""
         mock_check.return_value = True
@@ -35,7 +35,7 @@ class TestHealthCheck:
         assert "security_configured" in data
         assert data["sispubli_online"] is True
 
-    @patch("api._check_upstream_connectivity")
+    @patch("api._check_upstream_connectivity", new_callable=AsyncMock)
     def test_health_check_upstream_offline(self, mock_check):
         """API deve continuar online (200) mesmo se o Sispubli (upstream) falhar."""
         mock_check.return_value = False
