@@ -23,6 +23,10 @@ def sanitizador_lgpd(record):
         if isinstance(value, str):
             record["extra"][key] = CPF_PATTERN.sub(r"\g<1>********", value)
 
+    # 3. Garantir a existencia da chave 'module' para o formatador (Seguranca contra KeyError)
+    if "module" not in record["extra"]:
+        record["extra"]["module"] = record["name"]
+
 
 # Aplicar o patch de sanitizacao globalmente no Loguru
 logger = logger.patch(sanitizador_lgpd)
