@@ -26,6 +26,7 @@ import os
 import re
 import socket
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 import httpx
@@ -191,13 +192,14 @@ class ErrorResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    """Resposta do health check."""
+    """Resposta do health check detalhado."""
 
-    status: str = Field(
-        ...,
-        description="Status atual da API",
-        json_schema_extra={"example": "API do Sispubli rodando"},
-    )
+    status: str = Field(..., description="Status geral da nossa API")
+    environment: str = Field(..., description="Ambiente de execução (development/production)")
+    version: str = Field(..., description="Versão atual da API")
+    timestamp: datetime = Field(..., description="Momento exato da verificação (UTC)")
+    security_configured: bool = Field(..., description="Indica se chaves críticas estão no .env")
+    sispubli_online: bool = Field(..., description="Status de conectividade com o sistema upstream")
 
 
 class TokenRequest(BaseModel):
@@ -238,16 +240,40 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ===================================================================
-# ROTAS
-# ===================================================================
+
+async def _check_upstream_connectivity() -> bool:
+    """Valida se o Sispubli (IFS) está respondendo.
+
+    Usa timeout agressivo de 3s para evitar Cascading Failures.
+    Se falhar, retorna False sem derrubar a API.
+    """
+    url = "http://intranet.ifs.edu.br/publicacoes/site/indexCertificados.wsp"
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.head(url)
+            return resp.status_code < 400
+    except Exception as exc:
+        log.warning(f"Upstream Health Check falhou (esperado): {exc}")
+        return False
 
 
-@app.get("/", response_model=HealthResponse)
-def health_check():
-    """Rota de verificacao de saude da API."""
+@app.get("/", response_model=HealthResponse, tags=["Sistema"])
+async def health_check():
+    """Painel de saúde e diagnóstico da API."""
     log.info("Health check acessado")
-    return {"status": "API do Sispubli rodando"}
+
+    # Diagnóstico de segurança (Valida se as chaves existem no ambiente)
+    env_vars = ["HASH_SALT", "FERNET_SECRET_KEY", "SECRET_PEPPER"]
+    is_secure = all(os.environ.get(v) for v in env_vars)
+
+    return {
+        "status": "online",
+        "environment": os.environ.get("ENVIRONMENT", "development"),
+        "version": app.version,
+        "timestamp": datetime.now(UTC),
+        "security_configured": is_secure,
+        "sispubli_online": await _check_upstream_connectivity(),
+    }
 
 
 # ===================================================================
@@ -258,6 +284,7 @@ def health_check():
 @app.post(
     "/api/auth/token",
     response_model=TokenResponse,
+    tags=["Autenticação"],
     responses={
         400: {"model": ErrorResponse, "description": "CPF invalido"},
         429: {"model": ErrorResponse, "description": "Rate limit excedido"},
@@ -369,6 +396,7 @@ def _sanitizar_cpf_resposta(certificados: list[dict]) -> list[dict]:
 @app.get(
     "/api/certificados",
     response_model=CertificadosResponse,
+    tags=["Certificados"],
     responses={
         401: {"model": ErrorResponse, "description": "Nao autenticado"},
         400: {"model": ErrorResponse, "description": "Token invalido"},
@@ -539,6 +567,7 @@ def is_safe_host(hostname: str) -> bool:
 
 @app.get(
     "/api/pdf/{ticket}",
+    tags=["Certificados"],
     responses={
         200: {"content": {"application/pdf": {}}, "description": "PDF streamado"},
         400: {"model": ErrorResponse, "description": "Ticket invalido"},
