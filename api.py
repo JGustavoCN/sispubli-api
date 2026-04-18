@@ -34,7 +34,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
-from logger import logger
+from logger import aplicar_interceptor, logger
 from rate_limit import auth_limiter, extrair_ip_real, ip_limiter, ticket_limiter
 from scraper import fetch_all_certificates
 from security import (
@@ -59,16 +59,11 @@ security_scheme = HTTPBearer(auto_error=False)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Valida configuracoes criticas antes de aceitar requisicoes.
-
-    Em producao (ENVIRONMENT=production), o servidor NAO sobe se:
-        - HASH_SALT nao estiver definido
-        - FERNET_SECRET_KEY nao estiver definido
-        - SECRET_PEPPER nao estiver definido
-
-    Isso garante conformidade LGPD e seguranca criptografica
-    desde o primeiro deploy.
+    """Ativa sistemas de seguranca e valida configuracoes criticas.
     """
+    # 1. Ativar interceptacao de logs (httpx, uvicorn -> Loguru sanitizado)
+    aplicar_interceptor()
+
     environment = os.environ.get("ENVIRONMENT", "development")
 
     if environment == "production":
@@ -211,7 +206,7 @@ class TokenRequest(BaseModel):
     cpf: str = Field(
         ...,
         description="CPF do titular (11 digitos, aceita formatacao com pontos/traco)",
-        json_schema_extra={"example": "12345678900"},
+        json_schema_extra={"example": "74839210055"},
     )
 
 
@@ -339,8 +334,8 @@ async def auth_token(body: TokenRequest, request: Request):
 # ROTA: Listagem segura — GET /api/certificados
 # ===================================================================
 
-# Regex para limpar CPF de URLs e campos
-_CPF_PATTERN = re.compile(r"\b\d{11}\b")
+# Regex para limpar CPF de URLs e campos (captura 3 digitos para manter LGPD + rastreabilidade)
+_CPF_PATTERN = re.compile(r"(?<!\d)(\d{3})\d{8}(?!\d)")
 
 
 def _extrair_bearer_token(request: Request) -> str | None:
@@ -377,7 +372,10 @@ def _sanitizar_cpf_resposta(certificados: list[dict]) -> list[dict]:
     for cert in certificados:
         cert_limpo = {}
         for key, value in cert.items():
-            if isinstance(value, str):
+            #id_unico ja e um hash seguro com SALT, sanitizacao o corromperia
+            if key == "id_unico":
+                cert_limpo[key] = value
+            elif isinstance(value, str):
                 cert_limpo[key] = _CPF_PATTERN.sub("{cpf}", value)
             else:
                 cert_limpo[key] = value
@@ -429,7 +427,7 @@ async def listar_certificados(
         )
 
     # --- Validar tamanho ---
-    if len(raw_token) > 500:
+    if len(raw_token) > 2048:
         return JSONResponse(
             status_code=400,
             content={
@@ -468,9 +466,11 @@ async def listar_certificados(
             },
         )
 
-    # --- Buscar certificados ---
+    # --- Chamada ao scraper ---
     try:
-        resultado = fetch_all_certificates(cpf)
+        resultado_raw = fetch_all_certificates(cpf)
+        # Deepcopy fundamental para nao 'envenenar' o cache do scraper com tickets/mascaras
+        resultado = copy.deepcopy(resultado_raw)
     except ConnectionError as exc:
         log.error(f"Erro de conexao com Sispubli: {exc}")
         return JSONResponse(
@@ -559,7 +559,9 @@ def buscar_certificados(cpf: str):
     # --- Chamada ao scraper ---
     try:
         log.info("Iniciando busca de certificados para CPF valido")
-        resultado = fetch_all_certificates(cpf)
+        resultado_raw = fetch_all_certificates(cpf)
+        # Deepcopy fundamental para nao 'envenenar' o cache do scraper com tickets/mascaras
+        resultado = copy.deepcopy(resultado_raw)
 
         # --- Transformar resposta e converter para tickets ---
         certs = resultado.get("certificados", [])
@@ -668,7 +670,7 @@ async def tunnel_pdf(ticket: str):
     # --- Camada 2: Validacao SSRF ---
     parsed = urlparse(url)
     if not parsed.hostname or not is_safe_host(parsed.hostname):
-        log.warning(f"SSRF bloqueado para URL do ticket: {parsed.hostname}")
+        log.warning(f"SSRF bloqueado. Hostname: {parsed.hostname} | URL decriptada: {url}")
         return JSONResponse(
             status_code=403,
             content={
@@ -814,10 +816,17 @@ async def tunnel_pdf(ticket: str):
         except Exception as e:
             if "client" in locals():
                 await client.aclose()
-            log.error(f"💥 [TUNEL CRASH] Erro inesperado no motor: {str(e)}")
+
+            # Sanitizacao de PII na string da excecao antes de logar ou responder
+            safe_error_msg = _CPF_PATTERN.sub(r"\g<1>********", str(e))
+
+            log.error(f"💥 [TUNEL CRASH] Erro inesperado no motor: {safe_error_msg}")
             return JSONResponse(
                 status_code=500,
                 content={
-                    "error": {"code": "internal_error", "message": f"Erro no tunel: {str(e)}"}
+                    "error": {
+                        "code": "internal_error",
+                        "message": f"Erro no tunel: {safe_error_msg}",
+                    }
                 },
             )
