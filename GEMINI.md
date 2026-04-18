@@ -94,7 +94,7 @@ response_post = session.post(url, data=payload)
 A conversão final necessita de Expressões Regulares (`re`) porque os arquivos não são hiperlinks convencionais:
 
 ```python
-# Link target do IFS: javascript:abrirCertificado('00000000000', '1', '1850', '2011', ...)
+# Link target do IFS: javascript:abrirCertificado('74839210055', '1', '1850', '2011', ...)
 js_call = link.get('href')
 params_match = re.search(r"abrirCertificado\((.*?)\)", js_call)
 # Deve ser processado via strip e split para criar links relativos de download!

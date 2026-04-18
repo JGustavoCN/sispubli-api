@@ -52,7 +52,7 @@ cp .env.example .env
 
 ```ini
 # .env
-CPF_TESTE=00000000000   # Substitua pelo seu CPF real (apenas para testes E2E)
+CPF_TESTE=74839210055   # Substitua pelo seu CPF real (apenas para testes E2E)
 HASH_SALT=seu_salt_secreto_aqui
 ```
 
