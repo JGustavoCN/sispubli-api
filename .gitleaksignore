@@ -1,14 +1,5 @@
-title = "gitleaks ignore config"
-
-[allowlist]
-description = "Ignorar chaves de teste (mocks) e baselines do detect-secrets"
-
-# 1. Ignorar arquivos de baseline (pois contêm apenas hashes, não texto claro)
-paths = [
-    '''\.secrets\.baseline'''
-]
-
-# 2. Ignorar o VALOR específico da chave falsa que vazou no passado
-regexes = [
-    '''ABCDEFGHIJLMNOPQRSTUVWXYZ1234567''' # pragma: allowlist secret
-]
+8d9065de980ac82ceff652eeb73d88a30699d76f:tests/test_fail_fast.py:generic-api-key:47
+c4e749edd2b9748994573c397b15a607a9d836b2:.secrets.baseline:generic-api-key:136
+c4e749edd2b9748994573c397b15a607a9d836b2:.secrets.baseline:generic-api-key:145
+c4e749edd2b9748994573c397b15a607a9d836b2:.secrets.baseline:generic-api-key:154
+c4e749edd2b9748994573c397b15a607a9d836b2:.secrets.baseline:generic-api-key:163
