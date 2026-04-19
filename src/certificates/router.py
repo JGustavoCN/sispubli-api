@@ -13,6 +13,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 
 from rate_limit import extrair_ip_real, ip_limiter
 from src.core.logger import logger
+from src.core.schemas import ErrorResponse
 from src.core.security import ler_token_sessao, security_scheme
 
 from .schemas import CertificadosResponse
@@ -28,10 +29,10 @@ router = APIRouter(tags=["Certificados"])
     "/api/certificados",
     response_model=CertificadosResponse,
     responses={
-        401: {"description": "Nao autenticado"},
-        400: {"description": "Token invalido"},
-        429: {"description": "Rate limit excedido"},
-        502: {"description": "Sispubli fora do ar"},
+        400: {"model": ErrorResponse, "description": "Token invalido"},
+        401: {"model": ErrorResponse, "description": "Nao autenticado"},
+        429: {"model": ErrorResponse, "description": "Rate limit excedido"},
+        502: {"model": ErrorResponse, "description": "Sispubli fora do ar"},
     },
 )
 async def listar_certificados(

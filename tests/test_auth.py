@@ -136,7 +136,7 @@ class TestAuthMethodValidation:
 class TestAuthRateLimit:
     """Testes para rate limit anti-enumeracao na rota de auth."""
 
-    @patch("src.main.auth_limiter")
+    @patch("src.auth.router.auth_limiter")
     def test_rate_limit_retorna_429(self, mock_limiter):
         """Exceder limite de auth deve retornar 429."""
         mock_limiter.check = AsyncMock(return_value=False)

@@ -1,18 +1,13 @@
 """
 API REST do Sispubli — FastAPI.
 
-Expoe o motor de extracao de certificados como endpoints HTTP.
-
-Rotas:
-    GET  /                        : Health check
-    POST /api/auth/token          : Login — gera token de sessao
-    GET  /api/certificados        : Lista certificados (Seguro, via Bearer Token)
+Gerencia o tunnel de download de certificados e orquestra a autenticacao
+e listagem via rotas modularizadas (Vertical Slices).
 
 Seguranca:
     - Fail Fast em producao: HASH_SALT e FERNET_SECRET_KEY obrigatorios.
     - CPF nunca aparece em logs, URLs ou query parameters.
-    - Tokens Fernet com TTL 15 min para sessao.
-    - Rate limiting anti-enumeracao e anti-bot.
+    - Rate limiting em todos os pontos de entrada sensiveis.
 
 Respostas seguem o padrao:
     Sucesso: {"data": {...}} ou campos diretos
@@ -35,19 +30,17 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from rate_limit import auth_limiter, extrair_ip_real, ticket_limiter
+from rate_limit import ticket_limiter
 
+from .auth.router import router as auth_router
 from .certificates.router import router as certificates_router
 from .core.config import config
 from .core.logger import aplicar_interceptor, logger
+from .core.schemas import ErrorResponse
 from .core.security import (
     CPF_PATTERN,
-    derivar_session_hash,
-    gerar_token_sessao,
     ler_ticket_pdf,
-    normalizar_cpf,
 )
-from .core.validators import validar_cpf
 
 log = logger.bind(module=__name__)
 
@@ -70,27 +63,6 @@ async def lifespan(app: FastAPI):
     log.info("API encerrando")
 
 
-class ErrorDetail(BaseModel):
-    """Detalhe de erro padronizado para facilitar tratamento no cliente."""
-
-    code: str = Field(
-        ...,
-        description="Codigo de erro em snake_case para tratamento programatico",
-        json_schema_extra={"example": "invalid_cpf"},
-    )
-    message: str = Field(
-        ...,
-        description="Mensagem descritiva do erro em portugues",
-        json_schema_extra={"example": "CPF deve conter exatamente 11 digitos numericos."},
-    )
-
-
-class ErrorResponse(BaseModel):
-    """Envelope de resposta de erro — detalhes aninhados em 'error'."""
-
-    error: ErrorDetail
-
-
 class HealthResponse(BaseModel):
     """Resposta do health check detalhado."""
 
@@ -100,29 +72,6 @@ class HealthResponse(BaseModel):
     timestamp: datetime = Field(..., description="Momento exato da verificação (UTC)")
     security_configured: bool = Field(..., description="Indica se chaves críticas estão no .env")
     sispubli_online: bool = Field(..., description="Status de conectividade com o sistema upstream")
-
-
-class TokenRequest(BaseModel):
-    """Payload de entrada para geracao de token de sessao."""
-
-    cpf: str = Field(
-        ...,
-        description="CPF do titular (11 digitos, aceita formatacao com pontos/traco)",
-        json_schema_extra={"example": "74839210055"},
-    )
-
-
-class TokenResponse(BaseModel):
-    """Resposta da rota de autenticacao."""
-
-    access_token: str = Field(
-        ...,
-        description="Token Fernet criptografado (TTL 15 min)",
-    )
-    session_hash: str = Field(
-        ...,
-        description="Hash SHA-256 do token + pepper para cache key (64 chars hex)",
-    )
 
 
 # ===========================================================================
@@ -145,6 +94,7 @@ app = FastAPI(
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Rotas Modularizadas (Vertical Slices)
+app.include_router(auth_router)
 app.include_router(certificates_router)
 
 
@@ -285,72 +235,6 @@ async def favicon():
 async def chrome_devtools_probe():
     """Silencia o probe do Chrome para evitar ruído de 404 nos logs."""
     return Response(status_code=204)
-
-
-# ===================================================================
-# ROTA: Autenticacao — POST /api/auth/token
-# ===================================================================
-
-
-@app.post(
-    "/api/auth/token",
-    response_model=TokenResponse,
-    tags=["Autenticação"],
-    responses={
-        400: {"model": ErrorResponse, "description": "CPF invalido"},
-        429: {"model": ErrorResponse, "description": "Rate limit excedido"},
-    },
-)
-async def auth_token(body: TokenRequest, request: Request):
-    """Gera token de sessao e session_hash para um CPF.
-
-    O CPF e normalizado, validado e criptografado via Fernet.
-    O token tem TTL de 15 minutos. O session_hash e derivado
-    com SHA-256 + SECRET_PEPPER para uso como cache key.
-
-    Args:
-        body: JSON com campo 'cpf' (aceita formatacao).
-        request: Objeto Request para extracao de IP.
-
-    Returns:
-        JSON com access_token e session_hash.
-    """
-    # --- Rate limit anti-enumeracao ---
-    ip = extrair_ip_real(request)
-    if not await auth_limiter.check(ip):
-        log.warning(f"Rate limit de auth excedido para IP: {ip}")
-        return JSONResponse(
-            status_code=429,
-            content={
-                "error": {
-                    "code": "rate_limit_exceeded",
-                    "message": "Limite de requisicoes excedido. Tente novamente em breve.",
-                }
-            },
-        )
-
-    # --- Normalizacao e validacao do CPF ---
-    cpf = normalizar_cpf(body.cpf)
-    if not validar_cpf(cpf):
-        log.warning(f"CPF matematicamente invalido no auth: '{cpf[:3]}...'")
-        return JSONResponse(
-            status_code=422,
-            content={
-                "error": {
-                    "code": "invalid_cpf",
-                    "message": "CPF invalido",
-                }
-            },
-        )
-
-    # --- Geracao de token e hash ---
-    token = gerar_token_sessao(cpf)
-    session_hash = derivar_session_hash(token)
-
-    log.info(f"Token de sessao gerado com sucesso (hash: {session_hash[:16]}...)")
-    response = JSONResponse(content={"access_token": token, "session_hash": session_hash})
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    return response
 
 
 # ===================================================================
