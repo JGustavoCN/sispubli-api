@@ -4,7 +4,8 @@ from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.testclient import TestClient
 
 # Importando do src.main onde a lógica reside
-from src.main import app, security_scheme
+from src.core.security import security_scheme
+from src.main import app
 
 client = TestClient(app)
 
@@ -42,11 +43,13 @@ def test_cache_policy_certificados(mocker):
         scheme="Bearer", credentials="mock_token"
     )
 
-    # Mocks para o scraper, seguranca e rate limit - PATCH PARA SRC.MAIN
-    mocker.patch("src.main.ler_token_sessao", return_value="74839210055")
-    mocker.patch("src.main.ip_limiter.check", new_callable=AsyncMock, return_value=True)
+    # Mocks para o scraper, seguranca e rate limit - PATCH PARA O NOVO ROUTER
+    mocker.patch("src.certificates.router.ler_token_sessao", return_value="74839210055")
     mocker.patch(
-        "src.main.fetch_all_certificates",
+        "src.certificates.router.ip_limiter.check", new_callable=AsyncMock, return_value=True
+    )
+    mocker.patch(
+        "src.certificates.router.fetch_all_certificates",
         return_value={"usuario_id": "123", "total": 0, "certificados": []},
     )
 

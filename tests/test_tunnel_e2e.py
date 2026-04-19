@@ -206,9 +206,9 @@ def test_injecao_cpf_no_ticket_unitario(monkeypatch):
     }
 
     # Mockamos o scraper para retornar o placeholder literal
-    monkeypatch.setattr("src.main.fetch_all_certificates", lambda x: mock_certs)
+    monkeypatch.setattr("src.certificates.router.fetch_all_certificates", lambda x: mock_certs)
     # Mockamos a validacao do token de sessao para retornar nosso CPF fake
-    monkeypatch.setattr("src.main.ler_token_sessao", lambda x: cpf_fake)
+    monkeypatch.setattr("src.certificates.router.ler_token_sessao", lambda x: cpf_fake)
 
     # Chamamos a rota de listagem (o token 'xyz' é ignorado pelo mock)
     response = client.get("/api/certificados", headers={"Authorization": "Bearer xyz"})

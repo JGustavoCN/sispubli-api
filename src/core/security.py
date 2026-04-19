@@ -20,11 +20,19 @@ import hashlib
 import re
 
 from cryptography.fernet import Fernet
+from fastapi.security import HTTPBearer
 
 from .config import config
 from .logger import logger
 
 log = logger.bind(module=__name__)
+
+# Esquema de autenticação global para o Swagger UI (Bearer Token obrigatório)
+security_scheme = HTTPBearer()
+
+# Regex para detectar e mascarar CPF em textos brutos (logs, URLs, campos de texto)
+# Captura os 3 primeiros dígitos para manter rastreabilidade/diagnóstico mínima sob LGPD
+CPF_PATTERN = re.compile(r"(?<!\d)(\d{3})\d{8}(?!\d)")
 
 # ---------------------------------------------------------------------------
 # Configuracao via variaveis de ambiente

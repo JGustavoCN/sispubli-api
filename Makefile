@@ -40,13 +40,13 @@ install:
 	uv sync
 
 format:
-	uv run ruff format src/ scraper.py rate_limit.py api.py
+	uv run ruff format src/ rate_limit.py api.py
 
 lint:
-	uv run ruff check src/ scraper.py rate_limit.py api.py
+	uv run ruff check src/ rate_limit.py api.py
 
 lint-fix:
-	uv run ruff check src/ scraper.py rate_limit.py api.py --fix
+	uv run ruff check src/ rate_limit.py api.py --fix
 
 test:
 	uv run pytest -v -m "not e2e"

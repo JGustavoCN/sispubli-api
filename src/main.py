@@ -20,43 +20,36 @@ Respostas seguem o padrao:
 """
 
 import asyncio
-import copy
 import ipaddress
 import os
-import re
 import socket
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from rate_limit import auth_limiter, extrair_ip_real, ip_limiter, ticket_limiter
-from src.certificates.scraper import fetch_all_certificates
+from rate_limit import auth_limiter, extrair_ip_real, ticket_limiter
 
+from .certificates.router import router as certificates_router
 from .core.config import config
 from .core.logger import aplicar_interceptor, logger
 from .core.security import (
+    CPF_PATTERN,
     derivar_session_hash,
-    gerar_ticket_pdf,
     gerar_token_sessao,
     ler_ticket_pdf,
-    ler_token_sessao,
     normalizar_cpf,
 )
 from .core.validators import validar_cpf
 
 log = logger.bind(module=__name__)
-
-# Esquema de autenticação para o Swagger UI (Bearer Token obrigatório)
-security_scheme = HTTPBearer()
 
 
 # ===========================================================================
@@ -75,89 +68,6 @@ async def lifespan(app: FastAPI):
     log.info(f"API iniciando em modo: {config.ENVIRONMENT}")
     yield
     log.info("API encerrando")
-
-
-# ===========================================================================
-# Modelos Pydantic — Tipagem das respostas para Swagger/OpenAPI
-# ===========================================================================
-
-
-class CertificadoItem(BaseModel):
-    """Representa um certificado individual no retorno da API.
-
-    A url_download usa o padrao URL Template: o campo {cpf} deve ser
-    substituido pelo CPF real do usuario no cliente (Flutter/MCP)
-    antes de realizar o download. Isso evita trafegar dados sensiveis
-    no JSON de resposta.
-    """
-
-    id_unico: str = Field(
-        ...,
-        description="Hash SHA-256 unico do certificado (LGPD-compliant, gerado com SALT)",
-        json_schema_extra={
-            "example": "a3f8c2d1e4b7091f6e2a5d8c3b1f4e7a9d2c5b8e1f4a7c0d3b6e9f2a5c8b1e4"
-        },
-    )
-    titulo: str = Field(
-        ...,
-        description="Titulo do evento ou certificado conforme registrado no Sispubli",
-        json_schema_extra={"example": "Participacao no(a) SEPEX 2023"},
-    )
-    url_download: str | None = Field(
-        None,
-        description=(
-            "URL template para download do certificado. "
-            "Substitua '{cpf}' pelo CPF real antes de acessar. "
-            "Ex: url.replace('{cpf}', cpf_do_usuario)"
-        ),
-        json_schema_extra={
-            "example": (
-                "http://intranet.ifs.edu.br/publicacoes/relat/"
-                "certificado_participacao_process.wsp?"
-                "tmp.tx_cpf={cpf}&tmp.id_programa=1850&tmp.id_edicao=2011"
-            )
-        },
-    )
-    ano: int = Field(
-        ...,
-        description="Ano de realizacao do evento, extraido dos parametros do Sispubli",
-        json_schema_extra={"example": 2023},
-    )
-    tipo_codigo: int = Field(
-        ...,
-        description="Codigo numerico do tipo de certificado (1=Participacao, 2=Autor, etc.)",
-        json_schema_extra={"example": 1},
-    )
-    tipo_descricao: str = Field(
-        ...,
-        description="Descricao legivel do tipo de certificado",
-        json_schema_extra={"example": "Participacao"},
-    )
-
-
-class CertificadosResult(BaseModel):
-    """Resultado consolidado da busca de certificados para um CPF."""
-
-    usuario_id: str = Field(
-        ...,
-        description="CPF mascarado do titular no formato ***.XXX.XXX-** (LGPD)",
-        json_schema_extra={"example": "***.456.789-**"},
-    )
-    total: int = Field(
-        ...,
-        description="Quantidade total de certificados encontrados",
-        json_schema_extra={"example": 42},
-    )
-    certificados: list[CertificadoItem] = Field(
-        default_factory=list,
-        description="Lista completa de certificados disponiveis para o CPF informado",
-    )
-
-
-class CertificadosResponse(BaseModel):
-    """Envelope de resposta de sucesso — dados aninhados em 'data'."""
-
-    data: CertificadosResult
 
 
 class ErrorDetail(BaseModel):
@@ -232,8 +142,10 @@ app = FastAPI(
     redoc_url=None,  # Desabilita ReDoc padrão
 )
 
-# Montar diretório estático para servir imagens e ativos
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Rotas Modularizadas (Vertical Slices)
+app.include_router(certificates_router)
 
 
 @app.get("/docs", include_in_schema=False)
@@ -438,172 +350,6 @@ async def auth_token(body: TokenRequest, request: Request):
     log.info(f"Token de sessao gerado com sucesso (hash: {session_hash[:16]}...)")
     response = JSONResponse(content={"access_token": token, "session_hash": session_hash})
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    return response
-
-
-# ===================================================================
-# ROTA: Listagem segura — GET /api/certificados
-# ===================================================================
-
-# Regex para limpar CPF de URLs e campos (captura 3 digitos para manter LGPD + rastreabilidade)
-_CPF_PATTERN = re.compile(r"(?<!\d)(\d{3})\d{8}(?!\d)")
-
-
-def _substituir_urls_por_tickets(certificados: list[dict], cpf_real: str) -> list[dict]:
-    """Substitui url_download por /api/pdf/{ticket} criptografados.
-
-    Preenche o placeholder {cpf} da URL com o CPF real do servidor ANTES de
-    encapsular no Ticket Fernet, caso contrario o Sispubli geraria Relatorios
-    Brancos Vázios (Blank Page de 1096 bytes) buscando pelo cpf literal '{cpf}'.
-    """
-    resultado = []
-    for cert in certificados:
-        cert_copy = copy.deepcopy(cert)
-        url = cert_copy.get("url_download")
-        if url:
-            # Resolucao fundamental para o 'Blank Page Jasper Bug':
-            url_preenchida = url.replace("{cpf}", cpf_real)
-            ticket = gerar_ticket_pdf(url_preenchida)
-            cert_copy["url_download"] = f"/api/pdf/{ticket}"
-        resultado.append(cert_copy)
-    return resultado
-
-
-def _sanitizar_cpf_resposta(certificados: list[dict]) -> list[dict]:
-    """Remove qualquer CPF que ainda exista nos campos da resposta."""
-    resultado = []
-    for cert in certificados:
-        cert_limpo = {}
-        for key, value in cert.items():
-            # id_unico ja e um hash seguro com SALT, sanitizacao o corromperia
-            if key == "id_unico":
-                cert_limpo[key] = value
-            elif isinstance(value, str):
-                cert_limpo[key] = _CPF_PATTERN.sub("{cpf}", value)
-            else:
-                cert_limpo[key] = value
-        resultado.append(cert_limpo)
-    return resultado
-
-
-@app.get(
-    "/api/certificados",
-    response_model=CertificadosResponse,
-    tags=["Certificados"],
-    responses={
-        401: {"model": ErrorResponse, "description": "Nao autenticado"},
-        400: {"model": ErrorResponse, "description": "Token invalido"},
-        502: {"model": ErrorResponse, "description": "Sispubli fora do ar"},
-    },
-)
-async def listar_certificados(
-    request: Request,
-    credentials: HTTPAuthorizationCredentials = Depends(security_scheme),  # noqa: B008
-):
-    """Lista certificados do usuario autenticado via Bearer token.
-
-    O CPF e descriptografado do token, enviado ao scraper, e as URLs
-    resultantes sao substituidas por tickets criptografados (/api/pdf/{ticket}).
-    Nenhum CPF real aparece na resposta.
-
-    Args:
-        request: Starlette Request para obter IP.
-        credentials: Token Bearer extraido automaticamente.
-
-    Returns:
-        JSON com {data: {usuario_id, total, certificados}}.
-    """
-    # --- Extrair e validar token ---
-    # credentials já é garantido pelo FastAPI (HTTPBearer) devido ao auto_error=True
-    token = credentials.credentials
-
-    # Validar tamanho (segurança adicional contra DoS/Buffer Overflow)
-    if len(token) > 2048:
-        return JSONResponse(
-            status_code=400,
-            content={
-                "error": {
-                    "code": "token_too_large",
-                    "message": "Token excede tamanho maximo permitido.",
-                }
-            },
-        )
-
-    # --- Descriptografar CPF do token ---
-    try:
-        cpf = ler_token_sessao(token)
-        if not cpf:
-            raise ValueError("Token vazio")
-    except Exception:
-        log.warning("Tentativa de listagem com token invalido ou expirado")
-        return JSONResponse(
-            status_code=401,
-            content={
-                "error": {
-                    "code": "invalid_token",
-                    "message": "Token de sessao invalido, corrompido ou expirado.",
-                }
-            },
-        )
-
-    # --- Rate limit por IP ---
-    ip = extrair_ip_real(request)
-    if not await ip_limiter.check(ip):
-        return JSONResponse(
-            status_code=429,
-            content={
-                "error": {
-                    "code": "rate_limit_exceeded",
-                    "message": "Limite de requisicoes excedido.",
-                }
-            },
-        )
-
-    # --- Chamada ao scraper ---
-    try:
-        resultado_raw = fetch_all_certificates(cpf)
-        # Deepcopy fundamental para nao 'envenenar' o cache do scraper com tickets/mascaras
-        resultado = copy.deepcopy(resultado_raw)
-    except ConnectionError as exc:
-        log.error(f"Erro de conexao com Sispubli: {exc}")
-        return JSONResponse(
-            status_code=502,
-            content={
-                "error": {
-                    "code": "upstream_error",
-                    "message": "Sispubli temporariamente indisponivel.",
-                }
-            },
-        )
-    except Exception as exc:
-        log.error(f"Erro inesperado na listagem: {exc}")
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": {
-                    "code": "internal_error",
-                    "message": str(exc),
-                }
-            },
-        )
-
-    # --- Transformar resposta ---
-    certs = resultado.get("certificados", [])
-    certs_com_tickets = _substituir_urls_por_tickets(certs, cpf)
-    certs_limpos = _sanitizar_cpf_resposta(certs_com_tickets)
-
-    response_data = {
-        "data": {
-            "usuario_id": resultado.get("usuario_id", ""),
-            "total": resultado.get("total", 0),
-            "certificados": certs_limpos,
-        }
-    }
-
-    response = JSONResponse(content=response_data)
-    # Cache privado no cliente (App/Browser) por 5 minutos
-    response.headers["Cache-Control"] = "private, max-age=300, must-revalidate"
-    response.headers["Vary"] = "Authorization"
     return response
 
 
@@ -831,7 +577,7 @@ async def tunnel_pdf(ticket: str):
                 await client.aclose()
 
             # Sanitizacao de PII na string da excecao antes de logar ou responder
-            safe_error_msg = _CPF_PATTERN.sub(r"\g<1>********", str(e))
+            safe_error_msg = CPF_PATTERN.sub(r"\g<1>********", str(e))
 
             log.error(f"💥 [TUNEL CRASH] Erro inesperado no motor: {safe_error_msg}")
             return JSONResponse(
