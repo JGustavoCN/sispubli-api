@@ -68,8 +68,11 @@ def test_cache_policy_certificados(mocker):
 
 def test_cache_policy_pdf_tunnel(mocker):
     """GET /api/pdf/{ticket} deve usar cache PÚBLICO (CDN) por 24h."""
-    mocker.patch("src.main.ler_ticket_pdf", return_value="https://intranet.ifs.edu.br/mock")
-    mocker.patch("src.main.is_safe_host", return_value=True)
+    mocker.patch(
+        "src.certificate_proxy.router.ler_ticket_pdf",
+        return_value="https://intranet.ifs.edu.br/mock",
+    )
+    mocker.patch("src.certificate_proxy.router.is_safe_host", return_value=True)
 
     # Mock simplificado do stream do httpx
     async def mock_stream(*args, **kwargs):
@@ -85,11 +88,11 @@ def test_cache_policy_pdf_tunnel(mocker):
         return mock_resp
 
     mocker.patch(
-        "src.main.httpx.AsyncClient.get",
+        "src.certificate_proxy.services.httpx.AsyncClient.get",
         new_callable=AsyncMock,
         return_value=mocker.Mock(status_code=200),
     )
-    mocker.patch("src.main.httpx.AsyncClient.send", side_effect=mock_stream)
+    mocker.patch("src.certificate_proxy.services.httpx.AsyncClient.send", side_effect=mock_stream)
 
     response = client.get("/api/pdf/mock_ticket")
 

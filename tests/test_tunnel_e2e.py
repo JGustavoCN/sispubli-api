@@ -68,7 +68,7 @@ class MockAsyncClient:
 @pytest.fixture
 def mock_httpx_success(monkeypatch):
     """Retorna um PDF legitimo mockado."""
-    monkeypatch.setattr("src.main.httpx.AsyncClient", MockAsyncClient)
+    monkeypatch.setattr("src.certificate_proxy.services.httpx.AsyncClient", MockAsyncClient)
 
 
 @pytest.fixture
@@ -80,7 +80,7 @@ def mock_httpx_fake_pdf(monkeypatch):
             super().__init__(*args, **kwargs)
             self.chunks = [b"<html>Acesso Negado ou Redirecionamento de Auth</html>"]
 
-    monkeypatch.setattr("src.main.httpx.AsyncClient", FakePDFClient)
+    monkeypatch.setattr("src.certificate_proxy.services.httpx.AsyncClient", FakePDFClient)
 
 
 def test_magic_bytes_pass(mock_httpx_success):
@@ -119,7 +119,7 @@ def mock_httpx_timeout(monkeypatch):
         async def get(self, *args, **kwargs):
             raise httpx.TimeoutException("Timeout simulado")
 
-    monkeypatch.setattr("src.main.httpx.AsyncClient", TimeoutClient)
+    monkeypatch.setattr("src.certificate_proxy.services.httpx.AsyncClient", TimeoutClient)
 
 
 def test_tunnel_timeout_handling(mock_httpx_timeout):
@@ -139,7 +139,7 @@ def mock_httpx_refusal(monkeypatch):
             mock.status_code = 500
             return mock
 
-    monkeypatch.setattr("src.main.httpx.AsyncClient", RefusalClient)
+    monkeypatch.setattr("src.certificate_proxy.services.httpx.AsyncClient", RefusalClient)
 
 
 def test_tunnel_upstream_refusal(mock_httpx_refusal):

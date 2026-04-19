@@ -18,8 +18,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from rate_limit import auth_limiter, ip_limiter, ticket_limiter
+from src.certificate_proxy.validators import is_safe_host
 from src.core.security import gerar_ticket_pdf
-from src.main import app, is_safe_host
+from src.main import app
 
 client = TestClient(app)
 
@@ -67,7 +68,9 @@ class TestSsrfProtection:
 
     def test_host_correto_aceito(self):
         """intranet.ifs.edu.br deve ser aceito quando resolve para IP publico."""
-        with patch("src.main.socket.gethostbyname", return_value="200.17.15.1"):
+        with patch(
+            "src.certificate_proxy.validators.socket.gethostbyname", return_value="200.17.15.1"
+        ):
             assert is_safe_host("intranet.ifs.edu.br") is True
 
     def test_host_incorreto_rejeitado(self):
@@ -76,25 +79,33 @@ class TestSsrfProtection:
 
     def test_ip_privado_rejeitado(self):
         """DNS que resolve para IP privado deve ser rejeitado (anti-rebinding)."""
-        with patch("src.main.socket.gethostbyname", return_value="192.168.1.1"):
+        with patch(
+            "src.certificate_proxy.validators.socket.gethostbyname", return_value="192.168.1.1"
+        ):
             assert is_safe_host("intranet.ifs.edu.br") is False
 
     def test_ip_loopback_rejeitado(self):
         """DNS que resolve para 127.0.0.1 deve ser rejeitado."""
-        with patch("src.main.socket.gethostbyname", return_value="127.0.0.1"):
+        with patch(
+            "src.certificate_proxy.validators.socket.gethostbyname", return_value="127.0.0.1"
+        ):
             assert is_safe_host("intranet.ifs.edu.br") is False
 
     def test_ip_link_local_rejeitado(self):
         """DNS que resolve para IP link-local (169.254.x.x) deve ser rejeitado."""
-        with patch("src.main.socket.gethostbyname", return_value="169.254.169.254"):
+        with patch(
+            "src.certificate_proxy.validators.socket.gethostbyname", return_value="169.254.169.254"
+        ):
             assert is_safe_host("intranet.ifs.edu.br") is False
 
     def test_dns_falha_rejeitado(self):
         """Se DNS falhar, host deve ser rejeitado."""
-        with patch("src.main.socket.gethostbyname", side_effect=socket.gaierror):
+        with patch(
+            "src.certificate_proxy.validators.socket.gethostbyname", side_effect=socket.gaierror
+        ):
             assert is_safe_host("intranet.ifs.edu.br") is False
 
-    @patch("src.main.is_safe_host", return_value=False)
+    @patch("src.certificate_proxy.router.is_safe_host", return_value=False)
     def test_ticket_com_url_ssrf_retorna_403(self, mock_ssrf):
         """Ticket com URL que falha SSRF deve retornar 403."""
         url = "http://evil.com/malware.pdf"
@@ -113,8 +124,8 @@ class TestSsrfProtection:
 class TestTunnelRateLimit:
     """Testes de rate limit no tunel de download."""
 
-    @patch("src.main.ticket_limiter")
-    @patch("src.main.is_safe_host", return_value=True)
+    @patch("src.certificate_proxy.router.ticket_limiter")
+    @patch("src.certificate_proxy.router.is_safe_host", return_value=True)
     def test_ticket_rate_limit_429(self, mock_ssrf, mock_limiter):
         """Ticket que excede rate limit deve retornar 429."""
         mock_limiter.check = AsyncMock(return_value=False)
@@ -133,9 +144,9 @@ class TestTunnelRateLimit:
 class TestContentLengthGuard:
     """Testes de protecao contra PDFs gigantes."""
 
-    @patch("src.main.ticket_limiter")
-    @patch("src.main.is_safe_host", return_value=True)
-    @patch("src.main.httpx.AsyncClient")
+    @patch("src.certificate_proxy.router.ticket_limiter")
+    @patch("src.certificate_proxy.router.is_safe_host", return_value=True)
+    @patch("src.certificate_proxy.services.httpx.AsyncClient")
     def test_pdf_gigante_rejeitado(self, mock_client_cls, mock_ssrf, mock_limiter):
         """PDF > 10MB deve ser rejeitado. No novo motor, o stream e fechado se exceder."""
         mock_limiter.check = AsyncMock(return_value=True)
@@ -177,9 +188,9 @@ class TestContentLengthGuard:
 class TestTunnelHappyPath:
     """Testes do streaming seguro de PDF."""
 
-    @patch("src.main.ticket_limiter")
-    @patch("src.main.is_safe_host", return_value=True)
-    @patch("src.main.httpx.AsyncClient")
+    @patch("src.certificate_proxy.router.ticket_limiter")
+    @patch("src.certificate_proxy.router.is_safe_host", return_value=True)
+    @patch("src.certificate_proxy.services.httpx.AsyncClient")
     def test_streaming_pdf_retorna_200(self, mock_client_cls, mock_ssrf, mock_limiter):
         """Ticket valido com URL segura deve streamar o PDF."""
         mock_limiter.check = AsyncMock(return_value=True)
@@ -216,9 +227,9 @@ class TestTunnelHappyPath:
         assert response.headers["content-type"] == "application/pdf"
         assert response.content == pdf_full
 
-    @patch("src.main.ticket_limiter")
-    @patch("src.main.is_safe_host", return_value=True)
-    @patch("src.main.httpx.AsyncClient")
+    @patch("src.certificate_proxy.router.ticket_limiter")
+    @patch("src.certificate_proxy.router.is_safe_host", return_value=True)
+    @patch("src.certificate_proxy.services.httpx.AsyncClient")
     def test_upstream_fora_do_ar_retorna_504(self, mock_client_cls, mock_ssrf, mock_limiter):
         """Timeout com upstream deve retornar 504 (ou 502 se for ConnectError)."""
         mock_limiter.check = AsyncMock(return_value=True)
@@ -235,9 +246,9 @@ class TestTunnelHappyPath:
         response = client.get(f"/api/pdf/{ticket}")
         assert response.status_code == 504
 
-    @patch("src.main.ticket_limiter")
-    @patch("src.main.is_safe_host", return_value=True)
-    @patch("src.main.httpx.AsyncClient")
+    @patch("src.certificate_proxy.router.ticket_limiter")
+    @patch("src.certificate_proxy.router.is_safe_host", return_value=True)
+    @patch("src.certificate_proxy.services.httpx.AsyncClient")
     def test_nenhum_header_sensivel_repassado(self, mock_client_cls, mock_ssrf, mock_limiter):
         """Tunel nao deve repassar Referer ou Cookie do cliente."""
         mock_limiter.check = AsyncMock(return_value=True)
@@ -275,9 +286,9 @@ class TestTunnelHappyPath:
         assert sent_headers.get("Referer") == url
         assert "cookie" not in {k.lower() for k in sent_headers}
 
-    @patch("src.main.ticket_limiter")
-    @patch("src.main.is_safe_host", return_value=True)
-    @patch("src.main.httpx.AsyncClient")
+    @patch("src.certificate_proxy.router.ticket_limiter")
+    @patch("src.certificate_proxy.router.is_safe_host", return_value=True)
+    @patch("src.certificate_proxy.services.httpx.AsyncClient")
     def test_falso_pdf_retorna_502(self, mock_client_cls, mock_ssrf, mock_limiter):
         """Falso PDF (HTML) deve retornar status 502 Bad Gateway no novo motor."""
         mock_limiter.check = AsyncMock(return_value=True)
@@ -308,9 +319,9 @@ class TestTunnelHappyPath:
         assert response.status_code == 502
         assert response.json()["error"]["code"] == "fake_pdf"
 
-    @patch("src.main.ticket_limiter")
-    @patch("src.main.is_safe_host", return_value=True)
-    @patch("src.main.httpx.AsyncClient")
+    @patch("src.certificate_proxy.router.ticket_limiter")
+    @patch("src.certificate_proxy.router.is_safe_host", return_value=True)
+    @patch("src.certificate_proxy.services.httpx.AsyncClient")
     def test_tunnel_crash_masking(self, mock_client_cls, mock_ssrf, mock_limiter):
         """Crash inesperado no tunel nao deve vazar o CPF no payload do JSON."""
         mock_limiter.check = AsyncMock(return_value=True)
