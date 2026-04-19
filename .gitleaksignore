@@ -1,0 +1,14 @@
+title = "gitleaks ignore config"
+
+[allowlist]
+description = "Ignorar chaves de teste (mocks) e baselines do detect-secrets"
+
+# 1. Ignorar arquivos de baseline (pois contêm apenas hashes, não texto claro)
+paths = [
+    '''\.secrets\.baseline'''
+]
+
+# 2. Ignorar o VALOR específico da chave falsa que vazou no passado
+regexes = [
+    '''ABCDEFGHIJLMNOPQRSTUVWXYZ1234567''' # pragma: allowlist secret
+]
