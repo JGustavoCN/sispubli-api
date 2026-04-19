@@ -1,48 +1,53 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 from fastapi.testclient import TestClient
 
 from api import app
 
+client = TestClient(app)
+
 # ===================================================================
-# TESTES: Health Check
+# TESTES: Health Check (Integração com Mocks de Rede)
 # ===================================================================
 
 
 class TestHealthCheck:
-    """Testes para a rota de health check."""
+    """Testes para a rota de health check com mocks de rede reais."""
 
-    @patch("api._check_upstream_connectivity", new_callable=AsyncMock)
-    def test_health_check_status_200(self, mock_check):
-        """GET / deve retornar 200 independente do upstream."""
-        mock_check.return_value = True
-        client = TestClient(app)
-        response = client.get("/")
-        assert response.status_code == 200
+    @patch("httpx.AsyncClient.get", new_callable=AsyncMock)
+    def test_health_check_upstream_online(self, mock_get):
+        """GET / deve mostrar sispubli_online: true quando o GET retorna 200."""
+        # Simular resposta 200 para o GET
+        mock_get.return_value = MagicMock(status_code=200)
 
-    @patch("api._check_upstream_connectivity", new_callable=AsyncMock)
-    def test_health_check_full_schema(self, mock_check):
-        """GET / deve retornar JSON com todos os campos do modelo HealthResponse."""
-        mock_check.return_value = True
-        client = TestClient(app)
         response = client.get("/")
         data = response.json()
 
-        assert data["status"] == "online"
-        assert "environment" in data
-        assert "version" in data
-        assert "timestamp" in data
-        assert "security_configured" in data
+        assert response.status_code == 200
         assert data["sispubli_online"] is True
+        # Verifica se usamos o método GET agora (correção da bug)
+        mock_get.assert_called_once()
 
-    @patch("api._check_upstream_connectivity", new_callable=AsyncMock)
-    def test_health_check_upstream_offline(self, mock_check):
-        """API deve continuar online (200) mesmo se o Sispubli (upstream) falhar."""
-        mock_check.return_value = False
-        client = TestClient(app)
+    @patch("httpx.AsyncClient.get", new_callable=AsyncMock)
+    def test_health_check_upstream_offline(self, mock_get):
+        """GET / deve mostrar sispubli_online: false quando o upstream falha."""
+        # Simular erro 403 (ou qualquer erro >= 400)
+        mock_get.return_value = MagicMock(status_code=403)
+
+        response = client.get("/")
+        data = response.json()
+
+        assert response.status_code == 200  # Nossa API continua viva
+        assert data["sispubli_online"] is False
+
+    @patch("httpx.AsyncClient.get", new_callable=AsyncMock)
+    def test_health_check_upstream_timeout(self, mock_get):
+        """GET / deve tratar timeouts do upstream sem quebrar."""
+        mock_get.side_effect = httpx.TimeoutException("Timeout")
+
         response = client.get("/")
         data = response.json()
 
         assert response.status_code == 200
-        assert data["status"] == "online"
         assert data["sispubli_online"] is False

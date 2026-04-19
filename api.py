@@ -298,9 +298,15 @@ async def _check_upstream_connectivity() -> bool:
     Se falhar, retorna False sem derrubar a API.
     """
     url = "http://intranet.ifs.edu.br/publicacoes/site/indexCertificados.wsp"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+        )
+    }
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
-            resp = await client.head(url)
+            resp = await client.get(url, headers=headers)
             return resp.status_code < 400
     except Exception as exc:
         log.warning(f"Upstream Health Check falhou (esperado): {exc}")
