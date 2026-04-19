@@ -67,6 +67,28 @@ def normalizar_cpf(cpf: str) -> str:
     return re.sub(r"\D", "", cpf)
 
 
+def mask_cpf(cpf: str) -> str:
+    """Mascara um CPF para exibicao anonimizada em logs.
+
+    Formato: ***.XXX.XXX-**
+    Onde X sao os digitos do meio (posicoes 3-8).
+    O CPF NUNCA deve aparecer em claro nos logs.
+
+    Args:
+        cpf: String numerica do CPF (11 digitos).
+
+    Returns:
+        CPF mascarado. Se invalido, retorna '***.***.***-**'.
+    """
+    if len(cpf) < 11:
+        log.warning(f"CPF com tamanho invalido ({len(cpf)} digitos): mascarando generico")
+        return "***.***.***-**"
+
+    masked = f"***.{cpf[3:6]}.{cpf[6:9]}-**"
+    log.debug(f"CPF mascarado: {masked}")
+    return masked
+
+
 # ===================================================================
 # TOKEN DE SESSAO (Fernet + TTL)
 # ===================================================================

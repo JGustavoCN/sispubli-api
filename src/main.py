@@ -39,7 +39,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from rate_limit import auth_limiter, extrair_ip_real, ip_limiter, ticket_limiter
-from scraper import fetch_all_certificates
+from src.certificates.scraper import fetch_all_certificates
 
 from .core.config import config
 from .core.logger import aplicar_interceptor, logger
@@ -670,7 +670,10 @@ async def tunnel_pdf(ticket: str):
         return JSONResponse(
             status_code=400,
             content={
-                "error": {"code": "invalid_ticket", "message": "Ticket invalido ou corrompido."}
+                "error": {
+                    "code": "invalid_ticket",
+                    "message": "Ticket invalido ou corrompido.",
+                }
             },
         )
 
@@ -695,7 +698,10 @@ async def tunnel_pdf(ticket: str):
         return JSONResponse(
             status_code=429,
             content={
-                "error": {"code": "rate_limit_exceeded", "message": "Limite de downloads excedido."}
+                "error": {
+                    "code": "rate_limit_exceeded",
+                    "message": "Limite de downloads excedido.",
+                }
             },
         )
 

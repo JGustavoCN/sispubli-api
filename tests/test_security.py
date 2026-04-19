@@ -21,6 +21,7 @@ from src.core.security import (
     gerar_token_sessao,
     ler_ticket_pdf,
     ler_token_sessao,
+    mask_cpf,
     normalizar_cpf,
 )
 
@@ -47,6 +48,22 @@ class TestNormalizarCpf:
     def test_cpf_vazio_retorna_vazio(self):
         """CPF vazio retorna string vazia."""
         assert normalizar_cpf("") == ""
+
+
+class TestMaskCpf:
+    """Testes para mascaramento de CPF (identidade protegida em logs)."""
+
+    def test_mask_cpf_padrao(self):
+        """CPF de 11 digitos deve ser mascarado no formato ***.XXX.XXX-**."""
+        assert mask_cpf("74839210055") == "***.392.100-**"
+
+    def test_mask_cpf_curto_retorna_generico(self):
+        """CPF com menos de 11 digitos retorna mascara generica de seguranca."""
+        assert mask_cpf("123") == "***.***.***-**"
+
+    def test_mask_cpf_vazio_retorna_generico(self):
+        """CPF vazio retorna mascara generica."""
+        assert mask_cpf("") == "***.***.***-**"
 
 
 # ===================================================================

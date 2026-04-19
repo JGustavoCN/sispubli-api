@@ -1,4 +1,4 @@
-from scraper import extract_data
+from src.certificates.parsers import extract_data
 
 
 def test_extract_data_sanity_mock():

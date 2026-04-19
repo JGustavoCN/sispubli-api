@@ -13,14 +13,11 @@ Cobertura:
 
 from unittest.mock import MagicMock, patch
 
-from scraper import (
-    TIPO_DESCRICAO_MAP,
-    extract_next_offset,
-    fetch_all_certificates,
-    generate_cert_id,
-    mask_cpf,
-    montar_url,
-)
+from src.certificates.constants import TIPO_DESCRICAO_MAP
+from src.certificates.parsers import extract_next_offset
+from src.certificates.scraper import fetch_all_certificates
+from src.certificates.utils import generate_cert_id, montar_url
+from src.core.security import mask_cpf
 
 # ---------------------------------------------------------------------------
 # Fixtures: HTML mocks inline
@@ -332,7 +329,7 @@ class TestFetchAllCertificates:
         """Limpa o cache apos cada teste."""
         fetch_all_certificates.cache_clear()
 
-    @patch("scraper.requests.Session")
+    @patch("src.certificates.scraper.requests.Session")
     def test_pagination_two_pages(self, mock_session_class):
         """Simula 2 paginas: pagina 1 com 'Proximo', pagina 2 sem.
         Valida que 2 POSTs sao feitos e o total e a soma.
@@ -379,7 +376,7 @@ class TestFetchAllCertificates:
             # SHA-256 = 64 chars
             assert len(cert["id_unico"]) == 64
 
-    @patch("scraper.requests.Session")
+    @patch("src.certificates.scraper.requests.Session")
     def test_single_page_no_pagination(self, mock_session_class):
         """Simula retorno de pagina unica (sem link nav_go).
         Valida que apenas 1 POST e feito.
@@ -402,7 +399,7 @@ class TestFetchAllCertificates:
         assert result["total"] == 1
         assert mock_session.post.call_count == 1
 
-    @patch("scraper.requests.Session")
+    @patch("src.certificates.scraper.requests.Session")
     def test_campos_enriquecidos(self, mock_session_class):
         """Valida campos de enriquecimento: ano, tipo_codigo, tipo_descricao."""
         mock_session = MagicMock()
@@ -427,7 +424,7 @@ class TestFetchAllCertificates:
         assert cert["tipo_codigo"] == 1
         assert cert["tipo_descricao"] == "Participacao"
 
-    @patch("scraper.requests.Session")
+    @patch("src.certificates.scraper.requests.Session")
     def test_url_download_usa_template(self, mock_session_class):
         """SEGURANCA: url_download nao deve conter o CPF real."""
         mock_session = MagicMock()
@@ -451,7 +448,7 @@ class TestFetchAllCertificates:
                     f"CPF real encontrado na url_download: {cert['url_download']}"
                 )
 
-    @patch("scraper.requests.Session")
+    @patch("src.certificates.scraper.requests.Session")
     def test_lru_cache_reutiliza_resultado(self, mock_session_class):
         """lru_cache: segunda chamada com mesmo CPF nao bate no Sispubli."""
         mock_session = MagicMock()
@@ -488,7 +485,7 @@ class TestResultStructure:
     def teardown_method(self):
         fetch_all_certificates.cache_clear()
 
-    @patch("scraper.requests.Session")
+    @patch("src.certificates.scraper.requests.Session")
     def test_chaves_obrigatorias(self, mock_session_class):
         """Resultado deve conter usuario_id, total e certificados."""
         mock_session = MagicMock()
@@ -547,7 +544,7 @@ class TestTipoDescricaoMap:
 
     def test_cobertura_completa_tipos(self):
         """Todos os tipos mapeados no URL_TYPE_MAP devem ter descricao."""
-        from scraper import URL_TYPE_MAP
+        from src.certificates.constants import URL_TYPE_MAP
 
         for tipo in URL_TYPE_MAP:
             assert tipo in TIPO_DESCRICAO_MAP, f"Tipo {tipo} sem descricao no TIPO_DESCRICAO_MAP"
