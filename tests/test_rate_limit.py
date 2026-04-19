@@ -11,7 +11,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from rate_limit import RateLimiter, extrair_ip_real
+from src.core.rate_limit import RateLimiter, extrair_ip_real
 
 
 class TestExtracaoIP:

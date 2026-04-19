@@ -7,8 +7,8 @@ Gerencia a geracao de tokens de sessao e hashes de sessao.
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from rate_limit import auth_limiter, extrair_ip_real
 from src.core.logger import logger
+from src.core.rate_limit import auth_limiter, extrair_ip_real
 from src.core.schemas import ErrorResponse
 from src.core.security import derivar_session_hash, gerar_token_sessao, normalizar_cpf
 from src.core.validators import validar_cpf

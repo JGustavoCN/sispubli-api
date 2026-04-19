@@ -11,8 +11,8 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials
 
-from rate_limit import extrair_ip_real, ip_limiter
 from src.core.logger import logger
+from src.core.rate_limit import extrair_ip_real, ip_limiter
 from src.core.schemas import ErrorResponse
 from src.core.security import ler_token_sessao, security_scheme
 

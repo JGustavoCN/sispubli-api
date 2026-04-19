@@ -17,7 +17,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from rate_limit import auth_limiter
+from src.core.rate_limit import auth_limiter
 from src.core.security import gerar_token_sessao
 from src.main import app
 

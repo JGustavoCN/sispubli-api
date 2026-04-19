@@ -17,8 +17,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from rate_limit import auth_limiter, ip_limiter, ticket_limiter
 from src.certificate_proxy.validators import is_safe_host
+from src.core.rate_limit import auth_limiter, ip_limiter, ticket_limiter
 from src.core.security import gerar_ticket_pdf
 from src.main import app
 

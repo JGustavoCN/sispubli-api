@@ -8,8 +8,8 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from rate_limit import ticket_limiter
 from src.core.logger import logger
+from src.core.rate_limit import ticket_limiter
 from src.core.schemas import ErrorResponse
 from src.core.security import CPF_PATTERN, ler_ticket_pdf
 

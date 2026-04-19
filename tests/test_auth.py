@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from rate_limit import auth_limiter
+from src.core.rate_limit import auth_limiter
 from src.main import app
 
 client = TestClient(app)
