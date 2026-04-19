@@ -61,7 +61,9 @@ async def test_environment_prod_sucesso_com_variaveis(monkeypatch):
     original_key = Config.FERNET_SECRET_KEY
 
     Config.ENVIRONMENT = "production"
-    Config.FERNET_SECRET_KEY = "ABCDEFGHIJLMNOPQRSTUVWXYZ1234567"  # pragma: allowlist secret
+    Config.FERNET_SECRET_KEY = (
+        "ABCDEFGHIJLMNOPQRSTUVWXYZ1234567"  # pragma: allowlist secret # gitleaks:allow
+    )
 
     app = FastAPI()
 

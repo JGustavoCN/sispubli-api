@@ -8,6 +8,7 @@ useDefault = true
 description = "Ignorar arquivos de infraestrutura e segredos mockados de testes"
 paths = [
     '''\.secrets\.baseline$''',
+    '''tests/test_fail_fast\.py$''',
     '''uv\.lock$''',
     '''pyproject\.toml$''',
     '''Makefile$'''
