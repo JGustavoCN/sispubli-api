@@ -50,7 +50,7 @@ SECRET_PEPPER = os.environ.get("SECRET_PEPPER", "pepper_padrao_dev")
 TOKEN_TTL_SECONDS = 15 * 60
 
 # Tamanho maximo para tokens/tickets (protecao anti-DoS)
-MAX_TOKEN_LENGTH = 500
+MAX_TOKEN_LENGTH = 2048
 
 
 # ===================================================================
@@ -62,7 +62,7 @@ def normalizar_cpf(cpf: str) -> str:
     """Remove caracteres nao numericos de um CPF.
 
     Permite aceitar entradas como '123.456.789-00', '123 456 789 00',
-    etc., normalizando para '12345678900' antes de criptografar.
+    etc., normalizando para '74839210055' antes de criptografar.
 
     Args:
         cpf: String do CPF em qualquer formato.

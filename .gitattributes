@@ -1,0 +1,23 @@
+# Ignorar artefatos não-essenciais no git archive (export-ignore)
+.agent/ export-ignore
+.github/ export-ignore
+tests/ export-ignore
+docs/ export-ignore
+scripts/ export-ignore
+Makefile export-ignore
+.vercelignore export-ignore
+.dockerignore export-ignore
+.editorconfig export-ignore
+.pre-commit-config.yaml export-ignore
+.secrets.baseline export-ignore
+AGENTS.md export-ignore
+GEMINI.md export-ignore
+README.md export-ignore
+
+# Normalização de finais de linha
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+Makefile text eol=lf

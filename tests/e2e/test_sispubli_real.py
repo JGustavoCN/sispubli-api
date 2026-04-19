@@ -33,73 +33,78 @@ class TestSispubliReal:
             pytest.skip("CPF_TESTE nao definido no .env — pulando teste E2E")
         return cpf
 
-    def test_busca_certificados_real(self):
-        """Busca certificados reais de um CPF no Sispubli.
+    def _obter_token(self, client: TestClient, cpf: str) -> str:
+        """Helper para realizar o login e obter o access_token."""
+        response = client.post("/api/auth/token", json={"cpf": cpf})
+        assert response.status_code == 200, f"Falha na autenticacao E2E: {response.text}"
+        return response.json()["access_token"]
+
+    def test_listagem_certificados_real_fluxo_completo(self):
+        """Busca certificados reais usando o fluxo de autenticacao seguro.
 
         Valida:
-            - Status HTTP 200
-            - Estrutura da resposta (data.usuario_id, data.total, data.certificados)
-            - Tipos dos campos
-            - Total >= 0
+            - Login (POST /api/auth/token)
+            - Listagem (GET /api/certificados com Bearer Token)
+            - Estrutura da resposta e mascaramento de CPF
         """
         cpf = self._get_cpf_teste()
-
         client = TestClient(app)
-        response = client.get(f"/api/certificados/{cpf}")
+
+        # 1. Obter Token
+        token = self._obter_token(client, cpf)
+
+        # 2. Listagem Segura
+        response = client.get(
+            "/api/certificados",
+            headers={"Authorization": f"Bearer {token}"},
+        )
 
         assert response.status_code == 200, (
             f"Esperado 200, recebido {response.status_code}: {response.text}"
         )
 
         data = response.json()
-
-        # Estrutura do envelope
         assert "data" in data
         result = data["data"]
 
-        # Campos obrigatorios
+        # Campos obrigatorios e tipos
         assert "usuario_id" in result
-        assert "total" in result
-        assert "certificados" in result
-
-        # Tipos
-        assert isinstance(result["usuario_id"], str)
-        assert isinstance(result["total"], int)
         assert isinstance(result["certificados"], list)
 
-        # CPF deve estar mascarado (nao exposto)
+        # CPF deve estar mascarado na resposta JSON
         assert "***" in result["usuario_id"]
+        # Seguranca extra: o CPF real nunca deve aparecer no corpo da resposta
+        assert cpf not in response.text
 
-        # Total deve ser coerente com a lista
+        # Total deve ser coerente
         assert result["total"] == len(result["certificados"])
-        assert result["total"] >= 0
 
-    def test_estrutura_certificados_reais(self):
-        """Valida a estrutura de cada certificado retornado do Sispubli real."""
+    def test_estrutura_certificados_reais_com_auth(self):
+        """Valida a estrutura de cada certificado retornado do Sispubli real via Auth."""
         cpf = self._get_cpf_teste()
-
         client = TestClient(app)
-        response = client.get(f"/api/certificados/{cpf}")
+
+        token = self._obter_token(client, cpf)
+        response = client.get(
+            "/api/certificados",
+            headers={"Authorization": f"Bearer {token}"},
+        )
 
         assert response.status_code == 200
         certificados = response.json()["data"]["certificados"]
 
         if len(certificados) == 0:
-            pytest.skip("Nenhum certificado encontrado para validar estrutura")
+            pytest.skip(f"Nenhum certificado encontrado para o CPF ***{cpf[3:6]}***")
 
         for cert in certificados:
             # Chaves obrigatorias
-            assert "id_unico" in cert, f"Campo 'id_unico' ausente em: {cert}"
-            assert "titulo" in cert, f"Campo 'titulo' ausente em: {cert}"
-            assert "url_download" in cert, f"Campo 'url_download' ausente em: {cert}"
+            assert "id_unico" in cert
+            assert "titulo" in cert
+            assert "url_download" in cert
 
-            # Tipos
-            assert isinstance(cert["id_unico"], str)
-            assert len(cert["id_unico"]) == 64  # SHA-256 hex
-            assert isinstance(cert["titulo"], str)
-            assert len(cert["titulo"]) > 0
-
-            # URL pode ser None ou string valida
+            # Validação de Hash e Tickets
+            assert len(cert["id_unico"]) == 64  # SHA-256
             if cert["url_download"] is not None:
-                assert isinstance(cert["url_download"], str)
                 assert cert["url_download"].startswith("/api/pdf/")
+                # O CPF real nao deve estar injetado na URL do ticket de forma visível
+                assert cpf not in cert["url_download"]

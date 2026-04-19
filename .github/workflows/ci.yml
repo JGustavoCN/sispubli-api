@@ -26,6 +26,16 @@ jobs:
       # ------------------------------------------------------------------
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Necessario para o Gitleaks analisar historico
+
+      # ------------------------------------------------------------------
+      # 1.1 Gitleaks - Security Scan
+      # ------------------------------------------------------------------
+      - name: Gitleaks Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # ------------------------------------------------------------------
       # 2. Instalar Python e uv
@@ -47,21 +57,40 @@ jobs:
         run: uv sync
 
       # ------------------------------------------------------------------
-      # 4. Lint (ruff check + ruff format --check)
+      # 4. Lint (Makefile)
       # ------------------------------------------------------------------
       - name: Lint (Makefile)
         run: make lint
 
-      - name: Format check (ruff format)
-        run: uv run ruff format --check .
-
       # ------------------------------------------------------------------
-      # 5. Testes com cobertura
+      # 5. Testes + Cobertura
       # ------------------------------------------------------------------
       - name: Testes + Cobertura
-        run: make test
+        id: pytest
+        run: |
+          # Executa testes unitarios via Makefile e captura logs para auditoria
+          make test > test_execution.log 2>&1 || (export PYTEST_EXIT=$?; cat test_execution.log; exit $PYTEST_EXIT)
+          cat test_execution.log
         env:
           ENVIRONMENT: test
           HASH_SALT: ${{ secrets.HASH_SALT }}
           FERNET_SECRET_KEY: ${{ secrets.FERNET_SECRET_KEY }}
           SECRET_PEPPER: ${{ secrets.SECRET_PEPPER }}
+
+      # ------------------------------------------------------------------
+      # 6. Auditoria PII (Arquivos + Logs)
+      # ------------------------------------------------------------------
+      - name: Auditoria PII (Arquivos e Segredos)
+        run: make audit
+
+      - name: Auditoria de Logs (CPF Leak Check)
+        if: always()
+        run: |
+          echo "🔍 Verificando se o CPF de Mock apareceu nos logs de execucao..."
+          # CPF mockado oficial (74839210055)
+          if grep -F "74839210055" test_execution.log; then
+            echo "❌ ERRO: CPF (Mock) detectado nos logs! Verifique o mascaramento do logger."
+            exit 1
+          else
+            echo "✅ Logs limpos."
+          fi

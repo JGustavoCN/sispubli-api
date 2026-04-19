@@ -176,9 +176,7 @@ def test_e2e_real_pdf_tunnel():
     resp_pdf = client.get(url_tunel)
 
     # Se o Sispubli falhar, nossa API deve retornar 502 ou 200 OK com PDF real
-    if resp_pdf.status_code == 502:
-        print("✅ Interceptacao 502 funcionou para erro real do Sispubli.")
-    else:
+    if resp_pdf.status_code != 502:
         assert resp_pdf.status_code == 200
         assert resp_pdf.content.startswith(b"%PDF")
 
@@ -191,7 +189,7 @@ def test_injecao_cpf_no_ticket_unitario(monkeypatch):
     """
     from security import ler_ticket_pdf
 
-    cpf_fake = "11122233344"
+    cpf_fake = "74839210055"
     mock_certs = {
         "usuario_id": "***.222.333-**",
         "total": 1,
@@ -228,4 +226,3 @@ def test_injecao_cpf_no_ticket_unitario(monkeypatch):
     assert cpf_fake in url_real_decrypted
     assert "{cpf}" not in url_real_decrypted
     assert url_real_decrypted == f"http://servidor.com/relat?cpf={cpf_fake}&id=99"
-    print(f"\n[OK] Sucesso: CPF {cpf_fake} injetado corretamente no Ticket.")

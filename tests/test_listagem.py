@@ -5,7 +5,7 @@ Cobertura TDD:
     - 401 sem header Authorization
     - 401 com token invalido/corrompido
     - 401 com token expirado (TTL)
-    - 400 com token > 500 chars
+    - 400 com token > 2048 chars
     - 200 happy path com certificados mockados
     - URLs apontam para /api/pdf/{ticket}
     - CPF nao aparece na resposta JSON
@@ -59,7 +59,7 @@ class TestListagemAuth:
 
     def test_bearer_prefix_ausente_retorna_401(self):
         """Header sem prefixo 'Bearer ' retorna 401."""
-        token = gerar_token_sessao("12345678900")
+        token = gerar_token_sessao("74839210055")
         response = client.get(
             "/api/certificados",
             headers={"Authorization": token},
@@ -67,8 +67,8 @@ class TestListagemAuth:
         assert response.status_code == 401
 
     def test_token_muito_longo_retorna_400(self):
-        """Token > 500 caracteres retorna 400 imediatamente."""
-        token_longo = "A" * 501
+        """Token > 2048 caracteres retorna 400 imediatamente."""
+        token_longo = "A" * 2049
         response = client.get(
             "/api/certificados",
             headers={"Authorization": f"Bearer {token_longo}"},
@@ -118,7 +118,7 @@ class TestListagemHappyPath:
     def test_listagem_retorna_200_com_token_valido(self, mock_fetch):
         """Token valido deve retornar 200 com certificados."""
         mock_fetch.return_value = MOCK_SCRAPER_RESULT
-        token = gerar_token_sessao("12345678900")
+        token = gerar_token_sessao("74839210055")
 
         response = client.get(
             "/api/certificados",
@@ -132,7 +132,7 @@ class TestListagemHappyPath:
     def test_urls_apontam_para_tunel_pdf(self, mock_fetch):
         """URLs dos certificados devem apontar para /api/pdf/{ticket}."""
         mock_fetch.return_value = MOCK_SCRAPER_RESULT
-        token = gerar_token_sessao("12345678900")
+        token = gerar_token_sessao("74839210055")
 
         response = client.get(
             "/api/certificados",
@@ -150,7 +150,7 @@ class TestListagemHappyPath:
     def test_nenhum_cpf_na_resposta(self, mock_fetch):
         """Seguranca: CPF real nao deve aparecer em nenhum campo da resposta."""
         mock_fetch.return_value = MOCK_SCRAPER_RESULT
-        cpf_real = "12345678900"
+        cpf_real = "74839210055"
         token = gerar_token_sessao(cpf_real)
 
         response = client.get(
@@ -163,13 +163,15 @@ class TestListagemHappyPath:
 
     @patch("api.fetch_all_certificates")
     def test_headers_cache_control(self, mock_fetch):
-        """Resposta deve conter headers de cache corretos."""
+        """Resposta deve conter headers de cache corretos (private por 5 min)."""
         mock_fetch.return_value = MOCK_SCRAPER_RESULT
-        token = gerar_token_sessao("12345678900")
+        token = gerar_token_sessao("74839210055")
 
         response = client.get(
             "/api/certificados",
             headers={"Authorization": f"Bearer {token}"},
         )
-        assert "s-maxage=600" in response.headers.get("cache-control", "")
+        cache_control = response.headers.get("cache-control", "")
+        assert "private" in cache_control
+        assert "max-age=300" in cache_control
         assert "Authorization" in response.headers.get("vary", "")

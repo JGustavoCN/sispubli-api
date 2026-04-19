@@ -6,7 +6,7 @@ Expoe o motor de extracao de certificados como endpoints HTTP.
 Rotas:
     GET  /                        : Health check
     POST /api/auth/token          : Login — gera token de sessao
-    GET  /api/certificados/{cpf}  : Busca certificados (DEPRECATED)
+    GET  /api/certificados        : Lista certificados (Seguro, via Bearer Token)
 
 Seguranca:
     - Fail Fast em producao: HASH_SALT e FERNET_SECRET_KEY obrigatorios.
@@ -26,15 +26,19 @@ import os
 import re
 import socket
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import Depends, FastAPI, Query, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import Depends, FastAPI, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from logger import logger
+from logger import aplicar_interceptor, logger
 from rate_limit import auth_limiter, extrair_ip_real, ip_limiter, ticket_limiter
 from scraper import fetch_all_certificates
 from security import (
@@ -45,6 +49,7 @@ from security import (
     ler_token_sessao,
     normalizar_cpf,
 )
+from validators import validar_cpf
 
 log = logger.bind(module=__name__)
 
@@ -59,16 +64,10 @@ security_scheme = HTTPBearer(auto_error=False)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Valida configuracoes criticas antes de aceitar requisicoes.
+    """Ativa sistemas de seguranca e valida configuracoes criticas."""
+    # 1. Ativar interceptacao de logs (httpx, uvicorn -> Loguru sanitizado)
+    aplicar_interceptor()
 
-    Em producao (ENVIRONMENT=production), o servidor NAO sobe se:
-        - HASH_SALT nao estiver definido
-        - FERNET_SECRET_KEY nao estiver definido
-        - SECRET_PEPPER nao estiver definido
-
-    Isso garante conformidade LGPD e seguranca criptografica
-    desde o primeiro deploy.
-    """
     environment = os.environ.get("ENVIRONMENT", "development")
 
     if environment == "production":
@@ -196,13 +195,14 @@ class ErrorResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    """Resposta do health check."""
+    """Resposta do health check detalhado."""
 
-    status: str = Field(
-        ...,
-        description="Status atual da API",
-        json_schema_extra={"example": "API do Sispubli rodando"},
-    )
+    status: str = Field(..., description="Status geral da nossa API")
+    environment: str = Field(..., description="Ambiente de execução (development/production)")
+    version: str = Field(..., description="Versão atual da API")
+    timestamp: datetime = Field(..., description="Momento exato da verificação (UTC)")
+    security_configured: bool = Field(..., description="Indica se chaves críticas estão no .env")
+    sispubli_online: bool = Field(..., description="Status de conectividade com o sistema upstream")
 
 
 class TokenRequest(BaseModel):
@@ -211,7 +211,7 @@ class TokenRequest(BaseModel):
     cpf: str = Field(
         ...,
         description="CPF do titular (11 digitos, aceita formatacao com pontos/traco)",
-        json_schema_extra={"example": "12345678900"},
+        json_schema_extra={"example": "74839210055"},
     )
 
 
@@ -241,35 +241,117 @@ app = FastAPI(
     ),
     version="1.1.0",
     lifespan=lifespan,
+    docs_url=None,  # Desabilita Swagger padrão
+    redoc_url=None,  # Desabilita ReDoc padrão
 )
 
-# ---------------------------------------------------------------------------
-# Mensagens de erro conhecidas que indicam falha no Sispubli (upstream)
-# ---------------------------------------------------------------------------
-
-UPSTREAM_ERROR_PATTERNS = [
-    "Erro ao acessar",
-    "Erro ao enviar POST",
-    "Erro ao buscar pagina",
-    "Token nao encontrado",
-]
+# Montar diretório estático para servir imagens e ativos
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
-def _is_upstream_error(message: str) -> bool:
-    """Verifica se a mensagem de erro indica falha no Sispubli."""
-    return any(pattern in message for pattern in UPSTREAM_ERROR_PATTERNS)
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui_html():
+    """Renderiza interface Swagger UI customizada com favicon local."""
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=app.title + " - Swagger UI",
+        oauth2_redirect_url=app.swagger_ui_oauth2_redirect_url,
+        swagger_favicon_url="/favicon.ico",
+    )
 
 
-# ===================================================================
-# ROTAS
-# ===================================================================
+@app.get("/redoc", include_in_schema=False)
+async def redoc_html():
+    """Renderiza interface ReDoc customizada com favicon local."""
+    return get_redoc_html(
+        openapi_url=app.openapi_url,
+        title=app.title + " - ReDoc",
+        redoc_favicon_url="/favicon.ico",
+    )
 
 
-@app.get("/", response_model=HealthResponse)
-def health_check():
-    """Rota de verificacao de saude da API."""
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """Middleware global para seguranca e politica de cache.
+
+    1. Adiciona X-Content-Type-Options: nosniff
+    2. Garante no-store em qualquer erro (4xx/5xx) para evitar vazamento de informacao
+       ou cache indevido de falhas na CDN da Vercel.
+    """
+    response = await call_next(request)
+
+    # Adicionar nosniff globalmente por seguranca (RFC 7034)
+    if "X-Content-Type-Options" not in response.headers:
+        response.headers["X-Content-Type-Options"] = "nosniff"
+
+    # Trava de seguranca Zero Leak: Erros nunca devem ser cacheados em CDNs
+    if response.status_code >= 400:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+
+    return response
+
+
+async def _check_upstream_connectivity() -> bool:
+    """Valida se o Sispubli (IFS) está respondendo.
+
+    Usa timeout agressivo de 3s para evitar Cascading Failures.
+    Se falhar, retorna False sem derrubar a API.
+    """
+    url = "http://intranet.ifs.edu.br/publicacoes/site/indexCertificados.wsp"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+        )
+    }
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(url, headers=headers)
+            return resp.status_code < 400
+    except Exception as exc:
+        log.warning(f"Upstream Health Check falhou (esperado): {exc}")
+        return False
+
+
+@app.get("/", response_model=HealthResponse, tags=["Sistema"])
+async def health_check():
+    """Painel de saúde e diagnóstico da API."""
     log.info("Health check acessado")
-    return {"status": "API do Sispubli rodando"}
+
+    # Diagnóstico de segurança (Valida se as chaves existem no ambiente)
+    env_vars = ["HASH_SALT", "FERNET_SECRET_KEY", "SECRET_PEPPER"]
+    is_secure = all(os.environ.get(v) for v in env_vars)
+
+    response_data = {
+        "status": "online",
+        "environment": os.environ.get("ENVIRONMENT", "development"),
+        "version": app.version,
+        "timestamp": datetime.now(UTC),
+        "security_configured": is_secure,
+        "sispubli_online": await _check_upstream_connectivity(),
+    }
+
+    response = JSONResponse(content=jsonable_encoder(response_data))
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Interceta chamadas ao favicon para evitar spam de 404 e usar a logo do IFS."""
+    # Usar caminho absoluto baseado na raiz do projeto é mais seguro para deploy serverless
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(base_dir, "static", "favicon.ico")
+
+    if os.path.exists(file_path):
+        return FileResponse(file_path, media_type="image/x-icon")
+    return Response(status_code=204)
+
+
+@app.get("/.well-known/appspecific/com.chrome.devtools.json", include_in_schema=False)
+async def chrome_devtools_probe():
+    """Silencia o probe do Chrome para evitar ruído de 404 nos logs."""
+    return Response(status_code=204)
 
 
 # ===================================================================
@@ -280,6 +362,7 @@ def health_check():
 @app.post(
     "/api/auth/token",
     response_model=TokenResponse,
+    tags=["Autenticação"],
     responses={
         400: {"model": ErrorResponse, "description": "CPF invalido"},
         429: {"model": ErrorResponse, "description": "Rate limit excedido"},
@@ -315,14 +398,14 @@ async def auth_token(body: TokenRequest, request: Request):
 
     # --- Normalizacao e validacao do CPF ---
     cpf = normalizar_cpf(body.cpf)
-    if not cpf.isdigit() or len(cpf) != 11:
-        log.warning(f"CPF invalido recebido no auth: '{cpf[:3]}...' (len={len(cpf)})")
+    if not validar_cpf(cpf):
+        log.warning(f"CPF matematicamente invalido no auth: '{cpf[:3]}...'")
         return JSONResponse(
-            status_code=400,
+            status_code=422,
             content={
                 "error": {
                     "code": "invalid_cpf",
-                    "message": "CPF deve conter exatamente 11 digitos numericos.",
+                    "message": "CPF invalido",
                 }
             },
         )
@@ -332,15 +415,17 @@ async def auth_token(body: TokenRequest, request: Request):
     session_hash = derivar_session_hash(token)
 
     log.info(f"Token de sessao gerado com sucesso (hash: {session_hash[:16]}...)")
-    return {"access_token": token, "session_hash": session_hash}
+    response = JSONResponse(content={"access_token": token, "session_hash": session_hash})
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 
 # ===================================================================
 # ROTA: Listagem segura — GET /api/certificados
 # ===================================================================
 
-# Regex para limpar CPF de URLs e campos
-_CPF_PATTERN = re.compile(r"\b\d{11}\b")
+# Regex para limpar CPF de URLs e campos (captura 3 digitos para manter LGPD + rastreabilidade)
+_CPF_PATTERN = re.compile(r"(?<!\d)(\d{3})\d{8}(?!\d)")
 
 
 def _extrair_bearer_token(request: Request) -> str | None:
@@ -377,7 +462,10 @@ def _sanitizar_cpf_resposta(certificados: list[dict]) -> list[dict]:
     for cert in certificados:
         cert_limpo = {}
         for key, value in cert.items():
-            if isinstance(value, str):
+            # id_unico ja e um hash seguro com SALT, sanitizacao o corromperia
+            if key == "id_unico":
+                cert_limpo[key] = value
+            elif isinstance(value, str):
                 cert_limpo[key] = _CPF_PATTERN.sub("{cpf}", value)
             else:
                 cert_limpo[key] = value
@@ -388,6 +476,7 @@ def _sanitizar_cpf_resposta(certificados: list[dict]) -> list[dict]:
 @app.get(
     "/api/certificados",
     response_model=CertificadosResponse,
+    tags=["Certificados"],
     responses={
         401: {"model": ErrorResponse, "description": "Nao autenticado"},
         400: {"model": ErrorResponse, "description": "Token invalido"},
@@ -396,9 +485,6 @@ def _sanitizar_cpf_resposta(certificados: list[dict]) -> list[dict]:
 )
 async def listar_certificados(
     request: Request,
-    session: str | None = Query(
-        None, description="Parâmetro legacy usado em bypass SSR (caso falhe o Authorization header)"
-    ),
     credentials: HTTPAuthorizationCredentials = Depends(security_scheme),  # noqa: B008
 ):
     """Lista certificados do usuario autenticado via Bearer token.
@@ -429,7 +515,7 @@ async def listar_certificados(
         )
 
     # --- Validar tamanho ---
-    if len(raw_token) > 500:
+    if len(raw_token) > 2048:
         return JSONResponse(
             status_code=400,
             content={
@@ -468,9 +554,11 @@ async def listar_certificados(
             },
         )
 
-    # --- Buscar certificados ---
+    # --- Chamada ao scraper ---
     try:
-        resultado = fetch_all_certificates(cpf)
+        resultado_raw = fetch_all_certificates(cpf)
+        # Deepcopy fundamental para nao 'envenenar' o cache do scraper com tickets/mascaras
+        resultado = copy.deepcopy(resultado_raw)
     except ConnectionError as exc:
         log.error(f"Erro de conexao com Sispubli: {exc}")
         return JSONResponse(
@@ -508,95 +596,10 @@ async def listar_certificados(
     }
 
     response = JSONResponse(content=response_data)
-    response.headers["Cache-Control"] = "public, s-maxage=600"
+    # Cache privado no cliente (App/Browser) por 5 minutos
+    response.headers["Cache-Control"] = "private, max-age=300, must-revalidate"
     response.headers["Vary"] = "Authorization"
     return response
-
-
-@app.get(
-    "/api/certificados/{cpf}",
-    response_model=CertificadosResponse,
-    responses={
-        400: {"model": ErrorResponse, "description": "CPF invalido"},
-        502: {"model": ErrorResponse, "description": "Sispubli fora do ar"},
-        500: {"model": ErrorResponse, "description": "Erro interno"},
-    },
-)
-def buscar_certificados(cpf: str):
-    """Busca todos os certificados disponiveis para um CPF.
-
-    O CPF e validado, enviado ao Sispubli e nunca retornado em texto claro.
-    O campo `url_download` de cada certificado contem `{cpf}` como placeholder
-    — o cliente deve substituir pelo CPF real antes de acessar.
-
-    Args:
-        cpf: CPF do titular (apenas numeros, 11 digitos).
-
-    Returns:
-        JSON com a estrutura:
-        {"data": {"usuario_id": "...", "total": N, "certificados": [...]}}
-
-    Raises:
-        400: CPF com formato invalido.
-        502: Sispubli fora do ar ou com erro.
-        500: Erro inesperado interno.
-    """
-    log.info(f"Requisicao recebida: GET /api/certificados/{cpf[:3]}***")
-
-    # --- Validacao do CPF ---
-    if not cpf.isdigit() or len(cpf) != 11:
-        log.warning(f"CPF invalido recebido: '{cpf[:3]}...' (len={len(cpf)})")
-        return JSONResponse(
-            status_code=400,
-            content={
-                "error": {
-                    "code": "invalid_cpf",
-                    "message": "CPF deve conter exatamente 11 digitos numericos.",
-                }
-            },
-        )
-
-    # --- Chamada ao scraper ---
-    try:
-        log.info("Iniciando busca de certificados para CPF valido")
-        resultado = fetch_all_certificates(cpf)
-
-        # --- Transformar resposta e converter para tickets ---
-        certs = resultado.get("certificados", [])
-        certs_com_tickets = _substituir_urls_por_tickets(certs, cpf)
-        certs_limpos = _sanitizar_cpf_resposta(certs_com_tickets)
-
-        resultado["certificados"] = certs_limpos
-
-        log.info(f"Busca concluida: {resultado['total']} certificados encontrados")
-        return {"data": resultado}
-
-    except Exception as e:
-        error_message = str(e)
-        log.error(f"Erro durante busca de certificados: {error_message}")
-
-        if _is_upstream_error(error_message):
-            log.error("Classificado como erro de upstream (Sispubli)")
-            return JSONResponse(
-                status_code=502,
-                content={
-                    "error": {
-                        "code": "upstream_error",
-                        "message": f"Falha ao acessar o Sispubli: {error_message}",
-                    }
-                },
-            )
-
-        log.error("Classificado como erro interno inesperado")
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": {
-                    "code": "internal_error",
-                    "message": f"Erro interno do servidor: {error_message}",
-                }
-            },
-        )
 
 
 # ===================================================================
@@ -642,6 +645,7 @@ def is_safe_host(hostname: str) -> bool:
 
 @app.get(
     "/api/pdf/{ticket}",
+    tags=["Certificados"],
     responses={
         200: {"content": {"application/pdf": {}}, "description": "PDF streamado"},
         400: {"model": ErrorResponse, "description": "Ticket invalido"},
@@ -668,7 +672,7 @@ async def tunnel_pdf(ticket: str):
     # --- Camada 2: Validacao SSRF ---
     parsed = urlparse(url)
     if not parsed.hostname or not is_safe_host(parsed.hostname):
-        log.warning(f"SSRF bloqueado para URL do ticket: {parsed.hostname}")
+        log.warning(f"SSRF bloqueado. Hostname: {parsed.hostname} | URL decriptada: {url}")
         return JSONResponse(
             status_code=403,
             content={
@@ -794,7 +798,7 @@ async def tunnel_pdf(ticket: str):
                 media_type="application/pdf",
                 headers={
                     "Content-Disposition": 'inline; filename="certificado.pdf"',
-                    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                    "Cache-Control": "public, s-maxage=86400, stale-while-revalidate=86400",
                     "X-Content-Type-Options": "nosniff",
                 },
             )
@@ -814,10 +818,17 @@ async def tunnel_pdf(ticket: str):
         except Exception as e:
             if "client" in locals():
                 await client.aclose()
-            log.error(f"💥 [TUNEL CRASH] Erro inesperado no motor: {str(e)}")
+
+            # Sanitizacao de PII na string da excecao antes de logar ou responder
+            safe_error_msg = _CPF_PATTERN.sub(r"\g<1>********", str(e))
+
+            log.error(f"💥 [TUNEL CRASH] Erro inesperado no motor: {safe_error_msg}")
             return JSONResponse(
                 status_code=500,
                 content={
-                    "error": {"code": "internal_error", "message": f"Erro no tunel: {str(e)}"}
+                    "error": {
+                        "code": "internal_error",
+                        "message": f"Erro no tunel: {safe_error_msg}",
+                    }
                 },
             )
