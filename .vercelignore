@@ -1,3 +1,4 @@
+!static/
 .agent/
 .github/
 .pytest_cache/

@@ -30,10 +30,12 @@ from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from logger import aplicar_interceptor, logger
@@ -239,7 +241,33 @@ app = FastAPI(
     ),
     version="1.1.0",
     lifespan=lifespan,
+    docs_url=None,  # Desabilita Swagger padrão
+    redoc_url=None,  # Desabilita ReDoc padrão
 )
+
+# Montar diretório estático para servir imagens e ativos
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui_html():
+    """Renderiza interface Swagger UI customizada com favicon local."""
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=app.title + " - Swagger UI",
+        oauth2_redirect_url=app.swagger_ui_oauth2_redirect_url,
+        swagger_favicon_url="/favicon.ico",
+    )
+
+
+@app.get("/redoc", include_in_schema=False)
+async def redoc_html():
+    """Renderiza interface ReDoc customizada com favicon local."""
+    return get_redoc_html(
+        openapi_url=app.openapi_url,
+        title=app.title + " - ReDoc",
+        redoc_favicon_url="/favicon.ico",
+    )
 
 
 @app.middleware("http")
@@ -300,6 +328,18 @@ async def health_check():
     response = JSONResponse(content=jsonable_encoder(response_data))
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Interceta chamadas ao favicon para evitar spam de 404 e usar a logo do IFS."""
+    # Usar caminho absoluto baseado na raiz do projeto é mais seguro para deploy serverless
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(base_dir, "static", "favicon.ico")
+
+    if os.path.exists(file_path):
+        return FileResponse(file_path, media_type="image/x-icon")
+    return Response(status_code=204)
 
 
 # ===================================================================
