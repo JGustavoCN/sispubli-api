@@ -491,8 +491,6 @@ def fetch_all_certificates(cpf: str) -> dict:
 
 
 if __name__ == "__main__":
-    import json
-
     from dotenv import load_dotenv
 
     load_dotenv()
@@ -503,9 +501,6 @@ if __name__ == "__main__":
     else:
         try:
             result = fetch_all_certificates(cpf)
-            print("\n" + "=" * 60)
-            print("RESULTADO FINAL (JSON)")
-            print("=" * 60)
-            print(json.dumps(result, indent=2, ensure_ascii=False))
+            log.info(f"Busca concluida para CPF via CLI. Total: {result.get('total')}")
         except Exception as e:
             log.error(f"Erro durante execucao: {e}")

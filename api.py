@@ -4,31 +4,57 @@ API REST do Sispubli — FastAPI.
 Expoe o motor de extracao de certificados como endpoints HTTP.
 
 Rotas:
-    GET /                        : Health check
-    GET /api/certificados/{cpf}  : Busca todos os certificados de um CPF
+    GET  /                        : Health check
+    POST /api/auth/token          : Login — gera token de sessao
+    GET  /api/certificados        : Lista certificados (Seguro, via Bearer Token)
 
 Seguranca:
-    - Fail Fast em producao: se HASH_SALT nao estiver definido, o servidor
-      nao sobe (RuntimeError no lifespan).
-    - CPF nunca aparece em logs em texto claro.
-    - url_download usa padrao URL Template com {cpf} — cliente faz replace.
+    - Fail Fast em producao: HASH_SALT e FERNET_SECRET_KEY obrigatorios.
+    - CPF nunca aparece em logs, URLs ou query parameters.
+    - Tokens Fernet com TTL 15 min para sessao.
+    - Rate limiting anti-enumeracao e anti-bot.
 
 Respostas seguem o padrao:
-    Sucesso: {"data": {...}}
+    Sucesso: {"data": {...}} ou campos diretos
     Erro:    {"error": {"code": "...", "message": "..."}}
 """
 
+import asyncio
+import copy
+import ipaddress
 import os
+import re
+import socket
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from urllib.parse import urlparse
 
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+import httpx
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from logger import logger
+from logger import aplicar_interceptor, logger
+from rate_limit import auth_limiter, extrair_ip_real, ip_limiter, ticket_limiter
 from scraper import fetch_all_certificates
+from security import (
+    derivar_session_hash,
+    gerar_ticket_pdf,
+    gerar_token_sessao,
+    ler_ticket_pdf,
+    ler_token_sessao,
+    normalizar_cpf,
+)
+from validators import validar_cpf
 
 log = logger.bind(module=__name__)
+
+# Esquema de autenticação para o Swagger UI (Bearer Token obrigatório)
+security_scheme = HTTPBearer()
 
 
 # ===========================================================================
@@ -38,24 +64,26 @@ log = logger.bind(module=__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Valida configuracoes criticas antes de aceitar requisicoes.
+    """Ativa sistemas de seguranca e valida configuracoes criticas."""
+    # 1. Ativar interceptacao de logs (httpx, uvicorn -> Loguru sanitizado)
+    aplicar_interceptor()
 
-    Em producao (ENVIRONMENT=production), o HASH_SALT DEVE estar definido.
-    Caso contrario, o servidor nao sobe — essa e uma falha intencional
-    para garantir conformidade LGPD desde o primeiro deploy.
-    """
     environment = os.environ.get("ENVIRONMENT", "development")
-    hash_salt = os.environ.get("HASH_SALT", "")
 
-    if environment == "production" and not hash_salt:
-        log.critical(
-            "FALHA CRITICA DE CONFIGURACAO: ENVIRONMENT=production mas HASH_SALT nao definido. "
-            "Defina a variavel de ambiente HASH_SALT antes de subir em producao."
-        )
-        raise RuntimeError(
-            "HASH_SALT e obrigatorio em ambiente de producao. "
-            "Configure a variavel de ambiente antes de iniciar o servidor."
-        )
+    if environment == "production":
+        required_vars = ["HASH_SALT", "FERNET_SECRET_KEY", "SECRET_PEPPER"]
+        missing = [v for v in required_vars if not os.environ.get(v)]
+
+        if missing:
+            msg = f"Variaveis obrigatorias ausentes: {', '.join(missing)}"
+            log.critical(
+                f"FALHA CRITICA DE CONFIGURACAO: ENVIRONMENT=production "
+                f"mas {msg}. Defina antes de subir em producao."
+            )
+            raise RuntimeError(
+                f"{msg}. Configure as variaveis de ambiente "
+                "antes de iniciar o servidor em producao."
+            )
 
     log.info(f"API iniciando em modo: {environment}")
     yield
@@ -167,12 +195,36 @@ class ErrorResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    """Resposta do health check."""
+    """Resposta do health check detalhado."""
 
-    status: str = Field(
+    status: str = Field(..., description="Status geral da nossa API")
+    environment: str = Field(..., description="Ambiente de execução (development/production)")
+    version: str = Field(..., description="Versão atual da API")
+    timestamp: datetime = Field(..., description="Momento exato da verificação (UTC)")
+    security_configured: bool = Field(..., description="Indica se chaves críticas estão no .env")
+    sispubli_online: bool = Field(..., description="Status de conectividade com o sistema upstream")
+
+
+class TokenRequest(BaseModel):
+    """Payload de entrada para geracao de token de sessao."""
+
+    cpf: str = Field(
         ...,
-        description="Status atual da API",
-        json_schema_extra={"example": "API do Sispubli rodando"},
+        description="CPF do titular (11 digitos, aceita formatacao com pontos/traco)",
+        json_schema_extra={"example": "74839210055"},
+    )
+
+
+class TokenResponse(BaseModel):
+    """Resposta da rota de autenticacao."""
+
+    access_token: str = Field(
+        ...,
+        description="Token Fernet criptografado (TTL 15 min)",
+    )
+    session_hash: str = Field(
+        ...,
+        description="Hash SHA-256 do token + pepper para cache key (64 chars hex)",
     )
 
 
@@ -189,110 +241,612 @@ app = FastAPI(
     ),
     version="1.1.0",
     lifespan=lifespan,
+    docs_url=None,  # Desabilita Swagger padrão
+    redoc_url=None,  # Desabilita ReDoc padrão
 )
 
-# ---------------------------------------------------------------------------
-# Mensagens de erro conhecidas que indicam falha no Sispubli (upstream)
-# ---------------------------------------------------------------------------
-
-UPSTREAM_ERROR_PATTERNS = [
-    "Erro ao acessar",
-    "Erro ao enviar POST",
-    "Erro ao buscar pagina",
-    "Token nao encontrado",
-]
+# Montar diretório estático para servir imagens e ativos
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
-def _is_upstream_error(message: str) -> bool:
-    """Verifica se a mensagem de erro indica falha no Sispubli."""
-    return any(pattern in message for pattern in UPSTREAM_ERROR_PATTERNS)
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui_html():
+    """Renderiza interface Swagger UI customizada com favicon local."""
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=app.title + " - Swagger UI",
+        oauth2_redirect_url=app.swagger_ui_oauth2_redirect_url,
+        swagger_favicon_url="/favicon.ico",
+    )
 
 
-# ===================================================================
-# ROTAS
-# ===================================================================
+@app.get("/redoc", include_in_schema=False)
+async def redoc_html():
+    """Renderiza interface ReDoc customizada com favicon local."""
+    return get_redoc_html(
+        openapi_url=app.openapi_url,
+        title=app.title + " - ReDoc",
+        redoc_favicon_url="/favicon.ico",
+    )
 
 
-@app.get("/", response_model=HealthResponse)
-def health_check():
-    """Rota de verificacao de saude da API."""
+# ===========================================================================
+# Handlers de Exceção Globais — Padronização de Erros
+# ===========================================================================
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Garante que erros do FastAPI sigam o padrao {error: {code, message}}."""
+    if exc.status_code == 401:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "error": {
+                    "code": "unauthorized",
+                    "message": exc.detail,
+                }
+            },
+        )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": {
+                "code": "http_error",
+                "message": exc.detail,
+            }
+        },
+    )
+
+
+# ===========================================================================
+# Middleware — Segurança e Cache
+# ===========================================================================
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """Middleware global para seguranca e politica de cache.
+
+    1. Adiciona X-Content-Type-Options: nosniff
+    2. Garante no-store em qualquer erro (4xx/5xx) para evitar vazamento de informacao
+       ou cache indevido de falhas na CDN da Vercel.
+    """
+    response = await call_next(request)
+
+    # Adicionar nosniff globalmente por seguranca (RFC 7034)
+    if "X-Content-Type-Options" not in response.headers:
+        response.headers["X-Content-Type-Options"] = "nosniff"
+
+    # Trava de seguranca Zero Leak: Erros nunca devem ser cacheados em CDNs
+    if response.status_code >= 400:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+
+    return response
+
+
+async def _check_upstream_connectivity() -> bool:
+    """Valida se o Sispubli (IFS) está respondendo.
+
+    Usa timeout agressivo de 3s para evitar Cascading Failures.
+    Se falhar, retorna False sem derrubar a API.
+    """
+    url = "http://intranet.ifs.edu.br/publicacoes/site/indexCertificados.wsp"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+        )
+    }
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(url, headers=headers)
+            return resp.status_code < 400
+    except Exception as exc:
+        log.warning(f"Upstream Health Check falhou (esperado): {exc}")
+        return False
+
+
+@app.get("/", response_model=HealthResponse, tags=["Sistema"])
+async def health_check():
+    """Painel de saúde e diagnóstico da API."""
     log.info("Health check acessado")
-    return {"status": "API do Sispubli rodando"}
+
+    # Diagnóstico de segurança (Valida se as chaves existem no ambiente)
+    env_vars = ["HASH_SALT", "FERNET_SECRET_KEY", "SECRET_PEPPER"]
+    is_secure = all(os.environ.get(v) for v in env_vars)
+
+    response_data = {
+        "status": "online",
+        "environment": os.environ.get("ENVIRONMENT", "development"),
+        "version": app.version,
+        "timestamp": datetime.now(UTC),
+        "security_configured": is_secure,
+        "sispubli_online": await _check_upstream_connectivity(),
+    }
+
+    response = JSONResponse(content=jsonable_encoder(response_data))
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Interceta chamadas ao favicon para evitar spam de 404 e usar a logo do IFS."""
+    # Usar caminho absoluto baseado na raiz do projeto é mais seguro para deploy serverless
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(base_dir, "static", "favicon.ico")
+
+    if os.path.exists(file_path):
+        return FileResponse(file_path, media_type="image/x-icon")
+    return Response(status_code=204)
+
+
+@app.get("/.well-known/appspecific/com.chrome.devtools.json", include_in_schema=False)
+async def chrome_devtools_probe():
+    """Silencia o probe do Chrome para evitar ruído de 404 nos logs."""
+    return Response(status_code=204)
+
+
+# ===================================================================
+# ROTA: Autenticacao — POST /api/auth/token
+# ===================================================================
+
+
+@app.post(
+    "/api/auth/token",
+    response_model=TokenResponse,
+    tags=["Autenticação"],
+    responses={
+        400: {"model": ErrorResponse, "description": "CPF invalido"},
+        429: {"model": ErrorResponse, "description": "Rate limit excedido"},
+    },
+)
+async def auth_token(body: TokenRequest, request: Request):
+    """Gera token de sessao e session_hash para um CPF.
+
+    O CPF e normalizado, validado e criptografado via Fernet.
+    O token tem TTL de 15 minutos. O session_hash e derivado
+    com SHA-256 + SECRET_PEPPER para uso como cache key.
+
+    Args:
+        body: JSON com campo 'cpf' (aceita formatacao).
+        request: Objeto Request para extracao de IP.
+
+    Returns:
+        JSON com access_token e session_hash.
+    """
+    # --- Rate limit anti-enumeracao ---
+    ip = extrair_ip_real(request)
+    if not await auth_limiter.check(ip):
+        log.warning(f"Rate limit de auth excedido para IP: {ip}")
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error": {
+                    "code": "rate_limit_exceeded",
+                    "message": "Limite de requisicoes excedido. Tente novamente em breve.",
+                }
+            },
+        )
+
+    # --- Normalizacao e validacao do CPF ---
+    cpf = normalizar_cpf(body.cpf)
+    if not validar_cpf(cpf):
+        log.warning(f"CPF matematicamente invalido no auth: '{cpf[:3]}...'")
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": {
+                    "code": "invalid_cpf",
+                    "message": "CPF invalido",
+                }
+            },
+        )
+
+    # --- Geracao de token e hash ---
+    token = gerar_token_sessao(cpf)
+    session_hash = derivar_session_hash(token)
+
+    log.info(f"Token de sessao gerado com sucesso (hash: {session_hash[:16]}...)")
+    response = JSONResponse(content={"access_token": token, "session_hash": session_hash})
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+
+# ===================================================================
+# ROTA: Listagem segura — GET /api/certificados
+# ===================================================================
+
+# Regex para limpar CPF de URLs e campos (captura 3 digitos para manter LGPD + rastreabilidade)
+_CPF_PATTERN = re.compile(r"(?<!\d)(\d{3})\d{8}(?!\d)")
+
+
+def _substituir_urls_por_tickets(certificados: list[dict], cpf_real: str) -> list[dict]:
+    """Substitui url_download por /api/pdf/{ticket} criptografados.
+
+    Preenche o placeholder {cpf} da URL com o CPF real do servidor ANTES de
+    encapsular no Ticket Fernet, caso contrario o Sispubli geraria Relatorios
+    Brancos Vázios (Blank Page de 1096 bytes) buscando pelo cpf literal '{cpf}'.
+    """
+    resultado = []
+    for cert in certificados:
+        cert_copy = copy.deepcopy(cert)
+        url = cert_copy.get("url_download")
+        if url:
+            # Resolucao fundamental para o 'Blank Page Jasper Bug':
+            url_preenchida = url.replace("{cpf}", cpf_real)
+            ticket = gerar_ticket_pdf(url_preenchida)
+            cert_copy["url_download"] = f"/api/pdf/{ticket}"
+        resultado.append(cert_copy)
+    return resultado
+
+
+def _sanitizar_cpf_resposta(certificados: list[dict]) -> list[dict]:
+    """Remove qualquer CPF que ainda exista nos campos da resposta."""
+    resultado = []
+    for cert in certificados:
+        cert_limpo = {}
+        for key, value in cert.items():
+            # id_unico ja e um hash seguro com SALT, sanitizacao o corromperia
+            if key == "id_unico":
+                cert_limpo[key] = value
+            elif isinstance(value, str):
+                cert_limpo[key] = _CPF_PATTERN.sub("{cpf}", value)
+            else:
+                cert_limpo[key] = value
+        resultado.append(cert_limpo)
+    return resultado
 
 
 @app.get(
-    "/api/certificados/{cpf}",
+    "/api/certificados",
     response_model=CertificadosResponse,
+    tags=["Certificados"],
     responses={
-        400: {"model": ErrorResponse, "description": "CPF invalido"},
+        401: {"model": ErrorResponse, "description": "Nao autenticado"},
+        400: {"model": ErrorResponse, "description": "Token invalido"},
         502: {"model": ErrorResponse, "description": "Sispubli fora do ar"},
-        500: {"model": ErrorResponse, "description": "Erro interno"},
     },
 )
-def buscar_certificados(cpf: str):
-    """Busca todos os certificados disponiveis para um CPF.
+async def listar_certificados(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security_scheme),  # noqa: B008
+):
+    """Lista certificados do usuario autenticado via Bearer token.
 
-    O CPF e validado, enviado ao Sispubli e nunca retornado em texto claro.
-    O campo `url_download` de cada certificado contem `{cpf}` como placeholder
-    — o cliente deve substituir pelo CPF real antes de acessar.
+    O CPF e descriptografado do token, enviado ao scraper, e as URLs
+    resultantes sao substituidas por tickets criptografados (/api/pdf/{ticket}).
+    Nenhum CPF real aparece na resposta.
 
     Args:
-        cpf: CPF do titular (apenas numeros, 11 digitos).
+        request: Starlette Request para obter IP.
+        credentials: Token Bearer extraido automaticamente.
 
     Returns:
-        JSON com a estrutura:
-        {"data": {"usuario_id": "...", "total": N, "certificados": [...]}}
-
-    Raises:
-        400: CPF com formato invalido.
-        502: Sispubli fora do ar ou com erro.
-        500: Erro inesperado interno.
+        JSON com {data: {usuario_id, total, certificados}}.
     """
-    log.info(f"Requisicao recebida: GET /api/certificados/{cpf[:3]}***")
+    # --- Extrair e validar token ---
+    # credentials já é garantido pelo FastAPI (HTTPBearer) devido ao auto_error=True
+    token = credentials.credentials
 
-    # --- Validacao do CPF ---
-    if not cpf.isdigit() or len(cpf) != 11:
-        log.warning(f"CPF invalido recebido: '{cpf[:3]}...' (len={len(cpf)})")
+    # Validar tamanho (segurança adicional contra DoS/Buffer Overflow)
+    if len(token) > 2048:
         return JSONResponse(
             status_code=400,
             content={
                 "error": {
-                    "code": "invalid_cpf",
-                    "message": "CPF deve conter exatamente 11 digitos numericos.",
+                    "code": "token_too_large",
+                    "message": "Token excede tamanho maximo permitido.",
+                }
+            },
+        )
+
+    # --- Descriptografar CPF do token ---
+    try:
+        cpf = ler_token_sessao(token)
+        if not cpf:
+            raise ValueError("Token vazio")
+    except Exception:
+        log.warning("Tentativa de listagem com token invalido ou expirado")
+        return JSONResponse(
+            status_code=401,
+            content={
+                "error": {
+                    "code": "invalid_token",
+                    "message": "Token de sessao invalido, corrompido ou expirado.",
+                }
+            },
+        )
+
+    # --- Rate limit por IP ---
+    ip = extrair_ip_real(request)
+    if not await ip_limiter.check(ip):
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error": {
+                    "code": "rate_limit_exceeded",
+                    "message": "Limite de requisicoes excedido.",
                 }
             },
         )
 
     # --- Chamada ao scraper ---
     try:
-        log.info("Iniciando busca de certificados para CPF valido")
-        resultado = fetch_all_certificates(cpf)
-        log.info(f"Busca concluida: {resultado['total']} certificados encontrados")
-        return {"data": resultado}
-
-    except Exception as e:
-        error_message = str(e)
-        log.error(f"Erro durante busca de certificados: {error_message}")
-
-        if _is_upstream_error(error_message):
-            log.error("Classificado como erro de upstream (Sispubli)")
-            return JSONResponse(
-                status_code=502,
-                content={
-                    "error": {
-                        "code": "upstream_error",
-                        "message": f"Falha ao acessar o Sispubli: {error_message}",
-                    }
-                },
-            )
-
-        log.error("Classificado como erro interno inesperado")
+        resultado_raw = fetch_all_certificates(cpf)
+        # Deepcopy fundamental para nao 'envenenar' o cache do scraper com tickets/mascaras
+        resultado = copy.deepcopy(resultado_raw)
+    except ConnectionError as exc:
+        log.error(f"Erro de conexao com Sispubli: {exc}")
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": {
+                    "code": "upstream_error",
+                    "message": "Sispubli temporariamente indisponivel.",
+                }
+            },
+        )
+    except Exception as exc:
+        log.error(f"Erro inesperado na listagem: {exc}")
         return JSONResponse(
             status_code=500,
             content={
                 "error": {
                     "code": "internal_error",
-                    "message": f"Erro interno do servidor: {error_message}",
+                    "message": str(exc),
                 }
             },
         )
+
+    # --- Transformar resposta ---
+    certs = resultado.get("certificados", [])
+    certs_com_tickets = _substituir_urls_por_tickets(certs, cpf)
+    certs_limpos = _sanitizar_cpf_resposta(certs_com_tickets)
+
+    response_data = {
+        "data": {
+            "usuario_id": resultado.get("usuario_id", ""),
+            "total": resultado.get("total", 0),
+            "certificados": certs_limpos,
+        }
+    }
+
+    response = JSONResponse(content=response_data)
+    # Cache privado no cliente (App/Browser) por 5 minutos
+    response.headers["Cache-Control"] = "private, max-age=300, must-revalidate"
+    response.headers["Vary"] = "Authorization"
+    return response
+
+
+# ===================================================================
+# TUNEL DE DOWNLOAD SEGURO — GET /api/pdf/{ticket}
+# ===================================================================
+
+# Constantes
+MAX_PDF_SIZE = 10_000_000  # 10 MB
+TUNNEL_USER_AGENT = "Mozilla/5.0 (compatible; SispubliProxy/1.0)"
+_tunnel_semaphore = asyncio.Semaphore(10)
+
+
+def is_safe_host(hostname: str) -> bool:
+    """Valida hostname contra ataques SSRF (DNS rebinding, IP privado).
+
+    Camada 2 de defesa: garante que o host e o IP resolvido sao seguros:
+        1. Hostname deve ser exatamente 'intranet.ifs.edu.br'
+        2. IP resolvido nao pode ser privado, loopback ou link-local
+
+    Args:
+        hostname: Nome do host extraido da URL.
+
+    Returns:
+        True se seguro, False se bloqueado.
+    """
+    if hostname != "intranet.ifs.edu.br":
+        log.warning(f"SSRF: hostname rejeitado: {hostname}")
+        return False
+
+    try:
+        ip = socket.gethostbyname(hostname)
+        ip_obj = ipaddress.ip_address(ip)
+
+        if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local:
+            log.warning(f"SSRF: DNS rebinding detectado — {hostname} resolve para {ip}")
+            return False
+    except Exception:
+        log.warning(f"SSRF: falha ao resolver DNS de {hostname}")
+        return False
+
+    return True
+
+
+@app.get(
+    "/api/pdf/{ticket}",
+    tags=["Certificados"],
+    responses={
+        200: {"content": {"application/pdf": {}}, "description": "PDF streamado"},
+        400: {"model": ErrorResponse, "description": "Ticket invalido"},
+        403: {"model": ErrorResponse, "description": "SSRF bloqueado"},
+        413: {"model": ErrorResponse, "description": "PDF muito grande"},
+        429: {"model": ErrorResponse, "description": "Rate limit excedido"},
+        502: {"model": ErrorResponse, "description": "Upstream indisponivel"},
+    },
+)
+async def tunnel_pdf(ticket: str):
+    """Tunel seguro para download de PDFs do Sispubli com bypass de frameset."""
+    # --- Camada 1: Descriptografar ticket ---
+    try:
+        url = ler_ticket_pdf(ticket)
+    except Exception:
+        log.warning("Ticket de PDF invalido ou corrompido")
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {"code": "invalid_ticket", "message": "Ticket invalido ou corrompido."}
+            },
+        )
+
+    # --- Camada 2: Validacao SSRF ---
+    parsed = urlparse(url)
+    if not parsed.hostname or not is_safe_host(parsed.hostname):
+        log.warning(f"SSRF bloqueado. Hostname: {parsed.hostname} | URL decriptada: {url}")
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": {
+                    "code": "ssrf_blocked",
+                    "message": "URL de destino bloqueada por politica de seguranca.",
+                }
+            },
+        )
+
+    # --- Camada 3: Rate limit por ticket ---
+    ticket_hash = ticket[:32]
+    if not await ticket_limiter.check(ticket_hash):
+        log.warning(f"Rate limit de ticket excedido: {ticket_hash[:16]}...")
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error": {"code": "rate_limit_exceeded", "message": "Limite de downloads excedido."}
+            },
+        )
+
+    async def pdf_streamer(authenticated_client, first_chunk, upstream_response, content_iterator):
+        """Gerador assincrono que consome o resto do PDF do Sispubli."""
+        try:
+            yield first_chunk
+            total_bytes = len(first_chunk)
+            async for chunk in content_iterator:
+                total_bytes += len(chunk)
+                yield chunk
+
+            log.info(f"✅ [TUNEL SUCESSO] Certificado entregue. Total: {total_bytes} bytes.")
+        except Exception as e:
+            log.error(f"❌ [TUNEL ERRO] Falha durante o streaming: {str(e)}")
+        finally:
+            await upstream_response.aclose()
+            await authenticated_client.aclose()
+
+    # Camada 4: Controle de Concorrência
+    async with _tunnel_semaphore:
+        # Camada 5: Simulamos ser o Google Chrome perfeito para burlar firewalls/WAF
+        browser_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",  # noqa: E501
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",  # noqa: E501
+            "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Connection": "keep-alive",
+        }
+
+        # O httpx vai reter os cookies de sessao temporarios entre a Etapa A e B
+        client = httpx.AsyncClient(timeout=20.0, follow_redirects=True)
+        try:
+            # ETAPA A: O Gatilho (Bate na URL com o CPF para armar o PDF no backend)
+            prep_response = await client.get(url, headers=browser_headers)
+
+            if prep_response.status_code >= 400:
+                await client.aclose()
+                log.error(f"[TUNEL ERRO] Falha no gatilho. Status {prep_response.status_code}")
+                return JSONResponse(
+                    status_code=502,
+                    content={
+                        "error": {
+                            "code": "upstream_error",
+                            "message": "O sistema de origem nao respondeu corretamente ao gatilho.",
+                        }
+                    },
+                )
+
+            # ETAPA B: A Captura (Requisita o binario passando o Referer forjado)
+            base_sispubli = f"{parsed.scheme}://{parsed.netloc}"
+            target_url = f"{base_sispubli}/publicacoes/ReportConnector.wsp?tmp.reportShow=true"
+
+            pdf_headers = browser_headers.copy()
+            pdf_headers["Referer"] = url  # <-- O SEGREDO DO SISPUBLI ESTA AQUI
+
+            # Abrimos o stream manualmente para inspecionar o primeiro chunk
+            # antes de dar 200 pro cliente
+            stream_req = client.build_request("GET", target_url, headers=pdf_headers)
+            upstream_response = await client.send(stream_req, stream=True)
+
+            # --- A INTERCEPTACAO ANTECIPADA (Camada 2 da SPEC) ---
+            if upstream_response.status_code != 200:
+                await upstream_response.aclose()
+                await client.aclose()
+                log.error(f"❌ [TUNEL ERRO] Upstream status {upstream_response.status_code}")
+                return JSONResponse(
+                    status_code=502,
+                    content={
+                        "error": {
+                            "code": "upstream_refusal",
+                            "message": "O sistema de origem recusou a entrega do arquivo.",
+                        }
+                    },
+                )
+
+            # Lemos o primeiro chunk para validar os Magic Bytes do PDF
+            content_iterator = upstream_response.aiter_bytes()
+            try:
+                primeiro_chunk = await anext(content_iterator)
+            except StopAsyncIteration:
+                primeiro_chunk = b""
+
+            # Validação rigorosa do PDF (Magic Bytes %PDF-)
+            if not primeiro_chunk.lstrip().startswith(b"%PDF-"):
+                log.error("❌ [TUNEL ERRO] O Sispubli retornou HTML/Erro em vez de PDF!")
+                log.error(f"Conteudo interceptado: {primeiro_chunk[:100]!r}")
+                await upstream_response.aclose()
+                await client.aclose()
+                return JSONResponse(
+                    status_code=502,
+                    content={
+                        "error": {
+                            "code": "fake_pdf",
+                            "message": (
+                                "O arquivo retornado pelo sistema de origem nao e um PDF valido."
+                            ),
+                        }
+                    },
+                )
+
+            # Se chegou aqui, o arquivo é um PDF legítimo.
+            # Iniciamos o streaming real para o navegador.
+            return StreamingResponse(
+                pdf_streamer(client, primeiro_chunk, upstream_response, content_iterator),
+                media_type="application/pdf",
+                headers={
+                    "Content-Disposition": 'inline; filename="certificado.pdf"',
+                    "Cache-Control": "public, s-maxage=86400, stale-while-revalidate=86400",
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
+
+        except httpx.TimeoutException:
+            await client.aclose()
+            log.error(f"⏳ [TUNEL TIMEOUT] O Sispubli demorou +20s: {ticket[:10]}...")
+            return JSONResponse(
+                status_code=504,
+                content={
+                    "error": {
+                        "code": "gateway_timeout",
+                        "message": "O sistema de origem demorou a responder.",
+                    }
+                },
+            )
+        except Exception as e:
+            if "client" in locals():
+                await client.aclose()
+
+            # Sanitizacao de PII na string da excecao antes de logar ou responder
+            safe_error_msg = _CPF_PATTERN.sub(r"\g<1>********", str(e))
+
+            log.error(f"💥 [TUNEL CRASH] Erro inesperado no motor: {safe_error_msg}")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": {
+                        "code": "internal_error",
+                        "message": f"Erro no tunel: {safe_error_msg}",
+                    }
+                },
+            )
