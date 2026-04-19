@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import Depends, FastAPI, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -53,8 +53,8 @@ from validators import validar_cpf
 
 log = logger.bind(module=__name__)
 
-# Esquema de autenticação para o Swagger UI reconhecer e adicionar o cadeado
-security_scheme = HTTPBearer(auto_error=False)
+# Esquema de autenticação para o Swagger UI (Bearer Token obrigatório)
+security_scheme = HTTPBearer()
 
 
 # ===========================================================================
@@ -270,6 +270,40 @@ async def redoc_html():
     )
 
 
+# ===========================================================================
+# Handlers de Exceção Globais — Padronização de Erros
+# ===========================================================================
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Garante que erros do FastAPI sigam o padrao {error: {code, message}}."""
+    if exc.status_code == 401:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "error": {
+                    "code": "unauthorized",
+                    "message": exc.detail,
+                }
+            },
+        )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": {
+                "code": "http_error",
+                "message": exc.detail,
+            }
+        },
+    )
+
+
+# ===========================================================================
+# Middleware — Segurança e Cache
+# ===========================================================================
+
+
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
     """Middleware global para seguranca e politica de cache.
@@ -428,14 +462,6 @@ async def auth_token(body: TokenRequest, request: Request):
 _CPF_PATTERN = re.compile(r"(?<!\d)(\d{3})\d{8}(?!\d)")
 
 
-def _extrair_bearer_token(request: Request) -> str | None:
-    """Extrai o token do header Authorization: Bearer <token>."""
-    auth_header = request.headers.get("authorization", "")
-    if not auth_header.startswith("Bearer "):
-        return None
-    return auth_header[7:]  # Remove 'Bearer '
-
-
 def _substituir_urls_por_tickets(certificados: list[dict], cpf_real: str) -> list[dict]:
     """Substitui url_download por /api/pdf/{ticket} criptografados.
 
@@ -500,43 +526,35 @@ async def listar_certificados(
     Returns:
         JSON com {data: {usuario_id, total, certificados}}.
     """
-    # --- Extrair token ---
-    raw_token = _extrair_bearer_token(request) if not credentials else credentials.credentials
+    # --- Extrair e validar token ---
+    # credentials já é garantido pelo FastAPI (HTTPBearer) devido ao auto_error=True
+    token = credentials.credentials
 
-    if not raw_token:
-        return JSONResponse(
-            status_code=401,
-            content={
-                "error": {
-                    "code": "unauthorized",
-                    "message": "Header Authorization: Bearer <token> obrigatorio.",
-                }
-            },
-        )
-
-    # --- Validar tamanho ---
-    if len(raw_token) > 2048:
+    # Validar tamanho (segurança adicional contra DoS/Buffer Overflow)
+    if len(token) > 2048:
         return JSONResponse(
             status_code=400,
             content={
                 "error": {
                     "code": "token_too_large",
-                    "message": "Token excede tamanho maximo de 500 caracteres.",
+                    "message": "Token excede tamanho maximo permitido.",
                 }
             },
         )
 
     # --- Descriptografar CPF do token ---
     try:
-        cpf = ler_token_sessao(raw_token)
+        cpf = ler_token_sessao(token)
+        if not cpf:
+            raise ValueError("Token vazio")
     except Exception:
-        log.warning("Token de sessao invalido ou expirado na listagem")
+        log.warning("Tentativa de listagem com token invalido ou expirado")
         return JSONResponse(
             status_code=401,
             content={
                 "error": {
                     "code": "invalid_token",
-                    "message": "Token invalido, expirado ou corrompido.",
+                    "message": "Token de sessao invalido, corrompido ou expirado.",
                 }
             },
         )
