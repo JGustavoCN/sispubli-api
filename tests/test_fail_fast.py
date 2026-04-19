@@ -44,7 +44,7 @@ async def test_environment_prod_sucesso_com_variaveis(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("SECRET_PEPPER", "abcd")
     monkeypatch.setenv("HASH_SALT", "efgh")
-    monkeypatch.setenv("FERNET_SECRET_KEY", "ABCDEFGHIJLMNOPQRSTUVWXYZ1234567")
+    monkeypatch.setenv("FERNET_SECRET_KEY", "ABCDEFGHIJLMNOPQRSTUVWXYZ1234567")  # gitleaks:allow
 
     app = FastAPI()
 
