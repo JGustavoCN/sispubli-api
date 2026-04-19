@@ -41,10 +41,11 @@ def test_cache_policy_certificados(mocker):
         scheme="Bearer", credentials="mock_token"
     )
 
-    # Mocks para o scraper e seguranca
+    # Mocks para o scraper, seguranca e rate limit
     mocker.patch("api.ler_token_sessao", return_value="74839210055")
+    mocker.patch("api.ip_limiter.check", new_callable=AsyncMock, return_value=True)
     mocker.patch(
-        "scraper.fetch_all_certificates",
+        "api.fetch_all_certificates",
         return_value={"usuario_id": "123", "total": 0, "certificados": []},
     )
 
