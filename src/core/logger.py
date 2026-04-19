@@ -1,11 +1,13 @@
 import logging
-import os
 import re
 import sys
 
 from loguru import logger
 
+from .config import config
+
 # --- Camada de Seguranca LGPD (Zero Leak) ---
+# ... (restante da lógica simplificado para brevidade no chunk)
 
 # Regex focada em 11 digitos puros (formato Sispubli), capturando os 3 primeiros
 CPF_PATTERN = re.compile(r"(?<!\d)(\d{3})\d{8}(?!\d)")
@@ -36,10 +38,10 @@ logger = logger.patch(sanitizador_lgpd)
 # Remover o sink padrao do Loguru (stderr) para configurar do zero
 logger.remove()
 
-ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
+ENVIRONMENT = config.ENVIRONMENT
 
 if ENVIRONMENT == "test":
-    # Silencio total — sem nenhum sink configurado
+    # Silencio total â€” sem nenhum sink configurado
     pass
 
 elif ENVIRONMENT == "production":
@@ -104,5 +106,5 @@ def aplicar_interceptor():
 
 
 def get_logger(name: str) -> logger.__class__:
-    """Wrapper de compatibilidade — retorna logger com contexto de modulo."""
+    """Wrapper de compatibilidade â€” retorna logger com contexto de modulo."""
     return logger.bind(module=name)

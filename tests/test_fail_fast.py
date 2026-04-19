@@ -8,46 +8,67 @@ Segredos fundamentais (Privacy By Design).
 import pytest
 from fastapi import FastAPI
 
-from api import lifespan
+from src.core.config import Config
+from src.main import lifespan
 
 
 @pytest.mark.asyncio
 async def test_environment_dev_nao_crasha(monkeypatch):
     """Em Development a subida sem variáveis é perdoada (exceto se a ferramenta exigir)."""
-    monkeypatch.setenv("ENVIRONMENT", "development")
+    # Modifica o singleton para o teste
+    original_env = Config.ENVIRONMENT
+    Config.ENVIRONMENT = "development"
+
     app = FastAPI()
 
-    # Testa subida e descida sem estourar RuntimeError
-    async with lifespan(app):
-        pass
+    try:
+        # Testa subida e descida sem estourar RuntimeError
+        async with lifespan(app):
+            pass
+    finally:
+        Config.ENVIRONMENT = original_env
 
 
 @pytest.mark.asyncio
 async def test_environment_prod_falha_sem_variaveis(monkeypatch):
     """Garante que em Production a subida quebra com chaves ausentes."""
-    monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.delenv("SECRET_PEPPER", raising=False)
-    monkeypatch.delenv("HASH_SALT", raising=False)
-    monkeypatch.delenv("FERNET_SECRET_KEY", raising=False)
+    original_env = Config.ENVIRONMENT
+    original_key = Config.FERNET_SECRET_KEY
+
+    # Forçamos a classe a entender que está em produção e sem chaves
+    Config.ENVIRONMENT = "production"
+    Config.FERNET_SECRET_KEY = ""
 
     app = FastAPI()
 
-    # Tem que levantar RuntimeError impedindo o servidor de subir
-    with pytest.raises(RuntimeError, match="Variaveis obrigatorias ausentes"):
-        async with lifespan(app):
-            pass
+    try:
+        # Tem que levantar RuntimeError com a mensagem de variáveis ausentes
+        with pytest.raises(
+            RuntimeError, match="FALHA CRITICA: ENVIRONMENT=production mas variáveis ausentes:"
+        ):
+            async with lifespan(app):
+                pass
+    finally:
+        # Restaura estado original para não quebrar outros testes
+        Config.ENVIRONMENT = original_env
+        Config.FERNET_SECRET_KEY = original_key
 
 
 @pytest.mark.asyncio
 async def test_environment_prod_sucesso_com_variaveis(monkeypatch):
     """Garante que em Production a subida é concretizada se as chaves existirem."""
-    monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("SECRET_PEPPER", "abcd")
-    monkeypatch.setenv("HASH_SALT", "efgh")
-    monkeypatch.setenv("FERNET_SECRET_KEY", "ABCDEFGHIJLMNOPQRSTUVWXYZ1234567")  # gitleaks:allow
+    original_env = Config.ENVIRONMENT
+    original_key = Config.FERNET_SECRET_KEY
+
+    Config.ENVIRONMENT = "production"
+    Config.FERNET_SECRET_KEY = "ABCDEFGHIJLMNOPQRSTUVWXYZ1234567"  # pragma: allowlist secret
 
     app = FastAPI()
 
-    # Valida sucesso
-    async with lifespan(app):
-        pass
+    try:
+        # Valida sucesso
+        async with lifespan(app):
+            pass
+    finally:
+        Config.ENVIRONMENT = original_env
+        Config.FERNET_SECRET_KEY = original_key

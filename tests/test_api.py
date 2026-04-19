@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 from fastapi.testclient import TestClient
 
-from api import app
+from src.main import app
 
 client = TestClient(app)
 

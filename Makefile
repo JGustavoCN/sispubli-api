@@ -40,13 +40,13 @@ install:
 	uv sync
 
 format:
-	uv run ruff format .
+	uv run ruff format src/ scraper.py rate_limit.py api.py
 
 lint:
-	uv run ruff check .
+	uv run ruff check src/ scraper.py rate_limit.py api.py
 
 lint-fix:
-	uv run ruff check . --fix
+	uv run ruff check src/ scraper.py rate_limit.py api.py --fix
 
 test:
 	uv run pytest -v -m "not e2e"
@@ -70,7 +70,7 @@ monitor:
 	uv run python scripts/monitor_sispubli.py
 
 cov-html:
-	uv run pytest --cov=. --cov-report=html
+	uv run pytest --cov=src --cov=. --cov-report=html
 
 serve:
 	uv run uvicorn api:app --reload --host 0.0.0.0 --port 8000

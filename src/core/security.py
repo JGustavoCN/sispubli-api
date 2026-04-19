@@ -17,16 +17,12 @@ Gerar chaves:
 """
 
 import hashlib
-import os
 import re
 
 from cryptography.fernet import Fernet
-from dotenv import load_dotenv
 
-from logger import logger
-
-# Garante que as variáveis do .env (como FERNET_SECRET_KEY) estejam disponíveis
-load_dotenv()
+from .config import config
+from .logger import logger
 
 log = logger.bind(module=__name__)
 
@@ -35,7 +31,7 @@ log = logger.bind(module=__name__)
 # ---------------------------------------------------------------------------
 
 # Chave Fernet — em producao o lifespan do FastAPI valida presenca
-_fernet_key = os.environ.get("FERNET_SECRET_KEY", "")
+_fernet_key = config.FERNET_SECRET_KEY
 if not _fernet_key:
     # Gera chave efemera para desenvolvimento/testes — NAO use em producao
     _fernet_key = Fernet.generate_key().decode()
@@ -44,13 +40,11 @@ if not _fernet_key:
 _fernet = Fernet(_fernet_key.encode() if isinstance(_fernet_key, str) else _fernet_key)
 
 # Pepper para derivar session_hash — segredo distinto da chave Fernet
-SECRET_PEPPER = os.environ.get("SECRET_PEPPER", "pepper_padrao_dev")
+SECRET_PEPPER = config.SECRET_PEPPER
 
-# TTL do token de sessao em segundos (15 minutos)
-TOKEN_TTL_SECONDS = 15 * 60
-
-# Tamanho maximo para tokens/tickets (protecao anti-DoS)
-MAX_TOKEN_LENGTH = 2048
+# Constantes centralizadas no config
+TOKEN_TTL_SECONDS = config.TOKEN_TTL_SECONDS
+MAX_TOKEN_LENGTH = config.MAX_TOKEN_LENGTH
 
 
 # ===================================================================

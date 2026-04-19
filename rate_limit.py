@@ -22,7 +22,7 @@ Limitacoes conhecidas (aceitas para MVP):
 import asyncio
 import time
 
-from logger import logger
+from src.core.logger import logger
 
 log = logger.bind(module=__name__)
 

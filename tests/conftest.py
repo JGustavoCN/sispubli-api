@@ -3,7 +3,7 @@ import re
 
 import pytest
 
-from validators import validar_cpf
+from src.core.validators import validar_cpf
 
 # Valores de Mock Oficiais (LGPD Blindagem)
 MOCK_CPF = "74839210055"

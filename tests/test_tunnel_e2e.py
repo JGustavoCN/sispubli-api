@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from api import app
-from security import gerar_ticket_pdf
+from src.core.security import gerar_ticket_pdf
+from src.main import app
 
 # Setup do cliente de testes
 client = TestClient(app)
@@ -68,7 +68,7 @@ class MockAsyncClient:
 @pytest.fixture
 def mock_httpx_success(monkeypatch):
     """Retorna um PDF legitimo mockado."""
-    monkeypatch.setattr("api.httpx.AsyncClient", MockAsyncClient)
+    monkeypatch.setattr("src.main.httpx.AsyncClient", MockAsyncClient)
 
 
 @pytest.fixture
@@ -80,7 +80,7 @@ def mock_httpx_fake_pdf(monkeypatch):
             super().__init__(*args, **kwargs)
             self.chunks = [b"<html>Acesso Negado ou Redirecionamento de Auth</html>"]
 
-    monkeypatch.setattr("api.httpx.AsyncClient", FakePDFClient)
+    monkeypatch.setattr("src.main.httpx.AsyncClient", FakePDFClient)
 
 
 def test_magic_bytes_pass(mock_httpx_success):
@@ -119,7 +119,7 @@ def mock_httpx_timeout(monkeypatch):
         async def get(self, *args, **kwargs):
             raise httpx.TimeoutException("Timeout simulado")
 
-    monkeypatch.setattr("api.httpx.AsyncClient", TimeoutClient)
+    monkeypatch.setattr("src.main.httpx.AsyncClient", TimeoutClient)
 
 
 def test_tunnel_timeout_handling(mock_httpx_timeout):
@@ -139,7 +139,7 @@ def mock_httpx_refusal(monkeypatch):
             mock.status_code = 500
             return mock
 
-    monkeypatch.setattr("api.httpx.AsyncClient", RefusalClient)
+    monkeypatch.setattr("src.main.httpx.AsyncClient", RefusalClient)
 
 
 def test_tunnel_upstream_refusal(mock_httpx_refusal):
@@ -187,7 +187,7 @@ def test_injecao_cpf_no_ticket_unitario(monkeypatch):
     Garante que a API substitui o placeholder '{cpf}' pelo CPF real do usuario
     dentro do Ticket encriptado, evitando o erro de 'Pagina em Branco' do JasperReports.
     """
-    from security import ler_ticket_pdf
+    from src.core.security import ler_ticket_pdf
 
     cpf_fake = "74839210055"
     mock_certs = {
@@ -206,9 +206,9 @@ def test_injecao_cpf_no_ticket_unitario(monkeypatch):
     }
 
     # Mockamos o scraper para retornar o placeholder literal
-    monkeypatch.setattr("api.fetch_all_certificates", lambda x: mock_certs)
+    monkeypatch.setattr("src.main.fetch_all_certificates", lambda x: mock_certs)
     # Mockamos a validacao do token de sessao para retornar nosso CPF fake
-    monkeypatch.setattr("api.ler_token_sessao", lambda x: cpf_fake)
+    monkeypatch.setattr("src.main.ler_token_sessao", lambda x: cpf_fake)
 
     # Chamamos a rota de listagem (o token 'xyz' é ignorado pelo mock)
     response = client.get("/api/certificados", headers={"Authorization": "Bearer xyz"})

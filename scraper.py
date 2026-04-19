@@ -29,7 +29,8 @@ from functools import lru_cache
 import requests
 from bs4 import BeautifulSoup
 
-from logger import logger
+from src.core.config import config
+from src.core.logger import logger
 
 log = logger.bind(module=__name__)
 
@@ -41,7 +42,7 @@ MAX_PAGES = 50
 
 # SALT para hashing LGPD-compliant. Deve ser definido via env em producao.
 # O Fail Fast em producao e feito pelo api.py no lifespan.
-HASH_SALT = os.environ.get("HASH_SALT", "chave_secreta_padrao")
+HASH_SALT = config.HASH_SALT
 
 # ---------------------------------------------------------------------------
 # Mapeamento de codigo de tipo para descricao legivel

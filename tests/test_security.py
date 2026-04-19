@@ -15,7 +15,7 @@ from unittest.mock import patch
 import pytest
 from cryptography.fernet import InvalidToken
 
-from security import (
+from src.core.security import (
     derivar_session_hash,
     gerar_ticket_pdf,
     gerar_token_sessao,

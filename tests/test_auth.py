@@ -16,8 +16,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from api import app
 from rate_limit import auth_limiter
+from src.main import app
 
 client = TestClient(app)
 
@@ -136,7 +136,7 @@ class TestAuthMethodValidation:
 class TestAuthRateLimit:
     """Testes para rate limit anti-enumeracao na rota de auth."""
 
-    @patch("api.auth_limiter")
+    @patch("src.main.auth_limiter")
     def test_rate_limit_retorna_429(self, mock_limiter):
         """Exceder limite de auth deve retornar 429."""
         mock_limiter.check = AsyncMock(return_value=False)

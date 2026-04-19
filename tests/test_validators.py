@@ -1,4 +1,4 @@
-from validators import validar_cpf
+from src.core.validators import validar_cpf
 
 
 def test_cpf_valido_mock():

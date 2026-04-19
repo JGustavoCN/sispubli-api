@@ -16,8 +16,8 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from api import app
-from security import gerar_token_sessao
+from src.core.security import gerar_token_sessao
+from src.main import app
 
 client = TestClient(app)
 
@@ -35,7 +35,7 @@ def _obter_token(cpf: str = "74839210055") -> str:
 class TestPydanticSerialization:
     """Valida que a API serializa os dados via Pydantic corretamente."""
 
-    @patch("api.fetch_all_certificates")
+    @patch("src.main.fetch_all_certificates")
     def test_campos_certificado_tipados_corretamente(self, mock_fetch):
         """Cada campo do certificado deve ter o tipo correto."""
         mock_fetch.return_value = {
@@ -67,7 +67,7 @@ class TestPydanticSerialization:
         assert isinstance(cert["tipo_descricao"], str)
         assert len(cert["id_unico"]) == 64  # SHA-256 hex
 
-    @patch("api.fetch_all_certificates")
+    @patch("src.main.fetch_all_certificates")
     def test_url_nula_serializada_corretamente(self, mock_fetch):
         """Certificado com url_download=None deve serializar como null no JSON."""
         mock_fetch.return_value = {
@@ -92,7 +92,7 @@ class TestPydanticSerialization:
         cert = data["data"]["certificados"][0]
         assert cert["url_download"] is None
 
-    @patch("api.fetch_all_certificates")
+    @patch("src.main.fetch_all_certificates")
     def test_lista_vazia_de_certificados(self, mock_fetch):
         """Busca sem certificados deve retornar lista vazia e total=0."""
         mock_fetch.return_value = {
@@ -110,7 +110,7 @@ class TestPydanticSerialization:
         assert data["data"]["certificados"] == []
         assert isinstance(data["data"]["certificados"], list)
 
-    @patch("api.fetch_all_certificates")
+    @patch("src.main.fetch_all_certificates")
     def test_multiplos_certificados_tipos_variados(self, mock_fetch):
         """Resposta com multiplos certificados de tipos diferentes."""
         mock_fetch.return_value = {
@@ -180,7 +180,7 @@ class TestErrorFormat:
         assert "error" in data
         assert data["error"]["code"] == "invalid_token"
 
-    @patch("api.fetch_all_certificates")
+    @patch("src.main.fetch_all_certificates")
     def test_erro_502_formato_padronizado(self, mock_fetch):
         """Erro 502 deve seguir {error: {code: 'upstream_error', message: '...'}}."""
         # Na nova rota, simulamos ConnectionError que mapeia para 502
@@ -194,7 +194,7 @@ class TestErrorFormat:
         assert data["error"]["code"] == "upstream_error"
         assert "Sispubli" in data["error"]["message"]
 
-    @patch("api.fetch_all_certificates")
+    @patch("src.main.fetch_all_certificates")
     def test_erro_500_formato_padronizado(self, mock_fetch):
         """Erro 500 deve seguir {error: {code: 'internal_error', message: '...'}}."""
         mock_fetch.side_effect = ValueError("Erro inesperado")

@@ -2,7 +2,7 @@ import logging
 import sys
 from io import StringIO
 
-from logger import CPF_PATTERN, aplicar_interceptor, logger
+from src.core.logger import CPF_PATTERN, aplicar_interceptor, logger
 
 
 def test_cpf_regex_pattern():

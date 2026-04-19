@@ -3,7 +3,8 @@ from unittest.mock import AsyncMock, MagicMock
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.testclient import TestClient
 
-from api import app, security_scheme
+# Importando do src.main onde a lógica reside
+from src.main import app, security_scheme
 
 client = TestClient(app)
 
@@ -14,8 +15,8 @@ client = TestClient(app)
 
 def test_cache_policy_health_check(mocker):
     """GET / deve proibir cache (no-store)."""
-    # Mock assíncrono para evitar TypeError: object bool can't be used in 'await'
-    mocker.patch("api._check_upstream_connectivity", new_callable=AsyncMock, return_value=True)
+    # Patch correto para src.main
+    mocker.patch("src.main._check_upstream_connectivity", new_callable=AsyncMock, return_value=True)
 
     response = client.get("/")
     assert response.status_code == 200
@@ -41,11 +42,11 @@ def test_cache_policy_certificados(mocker):
         scheme="Bearer", credentials="mock_token"
     )
 
-    # Mocks para o scraper, seguranca e rate limit
-    mocker.patch("api.ler_token_sessao", return_value="74839210055")
-    mocker.patch("api.ip_limiter.check", new_callable=AsyncMock, return_value=True)
+    # Mocks para o scraper, seguranca e rate limit - PATCH PARA SRC.MAIN
+    mocker.patch("src.main.ler_token_sessao", return_value="74839210055")
+    mocker.patch("src.main.ip_limiter.check", new_callable=AsyncMock, return_value=True)
     mocker.patch(
-        "api.fetch_all_certificates",
+        "src.main.fetch_all_certificates",
         return_value={"usuario_id": "123", "total": 0, "certificados": []},
     )
 
@@ -64,10 +65,10 @@ def test_cache_policy_certificados(mocker):
 
 def test_cache_policy_pdf_tunnel(mocker):
     """GET /api/pdf/{ticket} deve usar cache PÚBLICO (CDN) por 24h."""
-    mocker.patch("api.ler_ticket_pdf", return_value="https://intranet.ifs.edu.br/mock")
-    mocker.patch("api.is_safe_host", return_value=True)
+    mocker.patch("src.main.ler_ticket_pdf", return_value="https://intranet.ifs.edu.br/mock")
+    mocker.patch("src.main.is_safe_host", return_value=True)
 
-    # Mock complexo do stream do httpx para validar o fluxo do tunnel
+    # Mock simplificado do stream do httpx
     async def mock_stream(*args, **kwargs):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -77,15 +78,15 @@ def test_cache_policy_pdf_tunnel(mocker):
             yield b"dummy_content"
 
         mock_resp.aiter_bytes = aiter_bytes
-        mock_resp.aclose = AsyncMock()  # Fechamento assíncrono
+        mock_resp.aclose = AsyncMock()
         return mock_resp
 
     mocker.patch(
-        "api.httpx.AsyncClient.get",
+        "src.main.httpx.AsyncClient.get",
         new_callable=AsyncMock,
         return_value=mocker.Mock(status_code=200),
     )
-    mocker.patch("api.httpx.AsyncClient.send", side_effect=mock_stream)
+    mocker.patch("src.main.httpx.AsyncClient.send", side_effect=mock_stream)
 
     response = client.get("/api/pdf/mock_ticket")
 
