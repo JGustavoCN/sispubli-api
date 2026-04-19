@@ -49,3 +49,9 @@ def test_redoc_page_accessible():
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
     assert "ReDoc" in response.text
+
+
+def test_chrome_devtools_probe_returns_204():
+    """Chrome DevTools probe deve retornar 204 para silenciar logs."""
+    response = client.get("/.well-known/appspecific/com.chrome.devtools.json")
+    assert response.status_code == 204

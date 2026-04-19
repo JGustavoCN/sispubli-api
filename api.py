@@ -342,6 +342,12 @@ async def favicon():
     return Response(status_code=204)
 
 
+@app.get("/.well-known/appspecific/com.chrome.devtools.json", include_in_schema=False)
+async def chrome_devtools_probe():
+    """Silencia o probe do Chrome para evitar ruído de 404 nos logs."""
+    return Response(status_code=204)
+
+
 # ===================================================================
 # ROTA: Autenticacao — POST /api/auth/token
 # ===================================================================
