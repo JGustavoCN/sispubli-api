@@ -13,21 +13,11 @@ Cobertura TDD:
 
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
-from src.core.rate_limit import auth_limiter
 from src.main import app
 
 client = TestClient(app)
-
-
-@pytest.fixture(autouse=True)
-def _reset_auth_limiter():
-    """Reseta o rate limiter de auth antes de cada teste."""
-    auth_limiter._requests.clear()
-    yield
-    auth_limiter._requests.clear()
 
 
 # ===================================================================
