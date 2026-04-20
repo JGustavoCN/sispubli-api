@@ -1,9 +1,9 @@
 # Makefile — Sispubli API
 # Gerenciador: uv | Linter/Formatter: ruff | Testes: pytest + coverage
 
-.PHONY: help install format lint lint-fix test test-v test-e2e test-tunnel update-mocks monitor \
+.PHONY: help install format format-check lint lint-fix test test-v test-e2e test-tunnel update-mocks monitor \
         cov-html serve run pre-commit docker-build docker-run clean check audit docs-check \
-        secrets-scan secrets-baseline
+        secrets-scan secrets-baseline check-all
 
 # Alvo padrão
 all: help
@@ -31,6 +31,7 @@ help:
 	@echo "  make clean        - Limpa cache e temporarios"
 	@echo "  make check        - Roda lint + test de uma vez"
 	@echo "  make audit        - Auditoria LGPD (procura CPFs reais no codigo)"
+	@echo "  make check-all    - Executa TODAS as validacoes do pre-commit em todos os arquivos"
 	@echo "  make secrets-scan  - Procura segredos hardcoded (detect-secrets)"
 	@echo "  make secrets-baseline - Gera/Atualiza o baseline de segredos"
 	@echo "  make docs-check   - Verifica integridade da documentacao"
@@ -40,13 +41,16 @@ install:
 	uv sync
 
 format:
-	uv run ruff format src/ api.py
+	uv run ruff format .
+
+format-check:
+	uv run ruff format . --check
 
 lint:
-	uv run ruff check src/ api.py
+	uv run ruff check .
 
 lint-fix:
-	uv run ruff check src/ api.py --fix
+	uv run ruff check . --fix
 
 test:
 	uv run pytest -v -m "not e2e"
@@ -55,7 +59,7 @@ test-v:
 	uv run pytest -v --tb=long --log-cli-level=DEBUG
 
 test-tunnel:
-	uv run pytest tests/test_tunnel.py tests/test_tunnel_e2e.py -v
+	uv run pytest tests/certificate_proxy/ -v
 
 test-e2e:
 	@echo "Rodando testes E2E em modo Playback (Offline)..."
@@ -101,6 +105,10 @@ secrets-scan:
 
 secrets-baseline:
 	uv run detect-secrets scan . --exclude-files "uv.lock" > .secrets.baseline
+
+check-all:
+	@echo "🔍 Executando suite completa de pre-commit em todos os arquivos..."
+	uv run pre-commit run --all-files
 
 docs-check:
 	@echo "Verificando existencia de documentos obrigatorios..."

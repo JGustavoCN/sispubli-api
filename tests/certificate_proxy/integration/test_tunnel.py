@@ -14,27 +14,16 @@ Cobertura TDD das 7 camadas de defesa:
 import socket
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from src.certificate_proxy.validators import is_safe_host
-from src.core.rate_limit import auth_limiter, ip_limiter, ticket_limiter
 from src.core.security import gerar_ticket_pdf
 from src.main import app
 
 client = TestClient(app)
 
 
-@pytest.fixture(autouse=True)
-def _reset_limiters():
-    """Reseta todos os rate limiters entre testes."""
-    auth_limiter._requests.clear()
-    ip_limiter._requests.clear()
-    ticket_limiter._requests.clear()
-    yield
-    auth_limiter._requests.clear()
-    ip_limiter._requests.clear()
-    ticket_limiter._requests.clear()
+client = TestClient(app)
 
 
 # ===================================================================

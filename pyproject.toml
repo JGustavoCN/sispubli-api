@@ -71,7 +71,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-m 'not e2e' --cov=src --cov=. --cov-report=term-missing --cov-report=html --tb=short"
+addopts = "-m 'not e2e' --cov=src --cov=. --cov-report=html --tb=short"
 markers = [
     "e2e: Testes end-to-end que acessam o Sispubli real (localmente via pre-push)",
 ]
