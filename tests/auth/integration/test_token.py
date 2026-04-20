@@ -2,7 +2,7 @@
 Testes da Rota de Autenticacao — POST /api/auth/token.
 
 Cobertura TDD:
-    - Happy path: CPF valido retorna access_token + session_hash
+    - Happy path: CPF valido retorna access_token
     - Validacao de CPF: letras, curto, longo → 400
     - Metodo incorreto: GET → 405
     - Body vazio → 422
@@ -40,14 +40,6 @@ class TestAuthHappyPath:
         assert "access_token" in data
         assert isinstance(data["access_token"], str)
         assert len(data["access_token"]) > 0
-
-    def test_login_resposta_contem_session_hash(self):
-        """Resposta deve conter campo session_hash (64 chars hex)."""
-        response = client.post("/api/auth/token", json={"cpf": "74839210055"})
-        data = response.json()
-        assert "session_hash" in data
-        assert isinstance(data["session_hash"], str)
-        assert len(data["session_hash"]) == 64
 
     def test_login_normaliza_cpf_com_pontuacao(self):
         """CPF com pontuacao deve ser aceito e normalizado."""

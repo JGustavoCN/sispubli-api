@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from src.core.logger import logger
 from src.core.rate_limit import auth_limiter, extrair_ip_real
 from src.core.schemas import ErrorResponse
-from src.core.security import derivar_session_hash, gerar_token_sessao, normalizar_cpf
+from src.core.security import gerar_token_sessao, normalizar_cpf
 from src.core.validators import validar_cpf
 
 from .schemas import TokenRequest, TokenResponse
@@ -30,11 +30,10 @@ router = APIRouter(tags=["Autenticação"])
     },
 )
 async def auth_token(body: TokenRequest, request: Request):
-    """Gera token de sessao e session_hash para um CPF.
+    """Gera token de sessao para um CPF.
 
     O CPF e normalizado, validado e criptografado via Fernet.
-    O token tem TTL de 15 minutos. O session_hash e derivado
-    com SHA-256 + SECRET_PEPPER para uso como cache key.
+    O token tem TTL de 15 minutos.
     """
     # --- Rate limit anti-enumeracao ---
     ip = extrair_ip_real(request)
@@ -64,11 +63,10 @@ async def auth_token(body: TokenRequest, request: Request):
             },
         )
 
-    # --- Geracao de token e hash ---
+    # --- Geracao de token ---
     token = gerar_token_sessao(cpf)
-    session_hash = derivar_session_hash(token)
 
-    log.info(f"Token de sessao gerado com sucesso (hash: {session_hash[:16]}...)")
-    response = JSONResponse(content={"access_token": token, "session_hash": session_hash})
+    log.info("Token de sessao gerado com sucesso")
+    response = JSONResponse(content={"access_token": token})
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response

@@ -4,19 +4,16 @@ Motor de Criptografia — Sispubli API.
 Modulo responsavel por toda operacao criptografica da API:
     - Tokens de sessao (Fernet + TTL 15 min) para autenticacao
     - Tickets de PDF (Fernet SEM TTL) para download compartilhavel
-    - Derivacao de session_hash (SHA-256 + SECRET_PEPPER) para cache
     - Normalizacao de CPF (remove caracteres nao-numericos)
 
 Variaveis de ambiente obrigatorias:
     FERNET_SECRET_KEY  — Chave Fernet simetrica (32 bytes base64)
-    SECRET_PEPPER      — Segredo para derivacao do session_hash
 
 Gerar chaves:
     python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     python -c "import secrets; print(secrets.token_urlsafe(32))"
 """
 
-import hashlib
 import re
 
 from cryptography.fernet import Fernet
@@ -202,28 +199,3 @@ def ler_ticket_pdf(ticket: str) -> str:
     url = url_bytes.decode("utf-8")
     log.debug("Ticket de PDF descriptografado com sucesso")
     return url
-
-
-# ===================================================================
-# SESSION HASH (SHA-256 + PEPPER)
-# ===================================================================
-
-
-def derivar_session_hash(token: str) -> str:
-    """Deriva um hash publico do token para uso como cache key.
-
-    Usa SHA-256 com SECRET_PEPPER para impedir correlacao de sessoes
-    ou ataques de dicionario via logs/CDN.
-
-    O hash e deterministico: mesmo token sempre gera o mesmo hash.
-
-    Args:
-        token: Token de sessao criptografado.
-
-    Returns:
-        Hash hexadecimal de 64 caracteres (SHA-256).
-    """
-    raw = f"{SECRET_PEPPER}{token}"
-    session_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
-    log.debug(f"Session hash derivado: {session_hash[:16]}...")
-    return session_hash

@@ -22,7 +22,3 @@ class TokenResponse(BaseModel):
         ...,
         description="Token Fernet criptografado (TTL 15 min)",
     )
-    session_hash: str = Field(
-        ...,
-        description="Hash SHA-256 do token + pepper para cache key (64 chars hex)",
-    )

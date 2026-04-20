@@ -4,7 +4,6 @@ Testes do Motor de Criptografia — security.py.
 Cobertura TDD:
     - gerar_token_sessao / ler_token_sessao: Round-trip, TTL, adulteracao
     - gerar_ticket_pdf / ler_ticket_pdf: Round-trip sem TTL, adulteracao
-    - derivar_session_hash: Determinismo, pepper obrigatorio
     - Validacao de tamanho: tokens/tickets > 2048 chars rejeitados
     - Normalizacao de CPF: aceita formatos com pontuacao
 """
@@ -16,7 +15,6 @@ import pytest
 from cryptography.fernet import InvalidToken
 
 from src.core.security import (
-    derivar_session_hash,
     gerar_ticket_pdf,
     gerar_token_sessao,
     ler_ticket_pdf,
@@ -168,52 +166,3 @@ class TestTicketPdf:
         ticket_gigante = "B" * 2049
         with pytest.raises(ValueError, match="Ticket excede tamanho maximo"):
             ler_ticket_pdf(ticket_gigante)
-
-
-# ===================================================================
-# TESTES: Derivacao de Session Hash (SHA-256 + PEPPER)
-# ===================================================================
-
-
-class TestDerivarSessionHash:
-    """Testes para derivacao do session_hash com SECRET_PEPPER."""
-
-    def test_hash_retorna_string_hexadecimal(self):
-        """Hash deve ser uma string hexadecimal de 64 caracteres."""
-        token = gerar_token_sessao("74839210055")
-        h = derivar_session_hash(token)
-        assert isinstance(h, str)
-        assert len(h) == 64
-        assert all(c in "0123456789abcdef" for c in h)
-
-    def test_hash_deterministico(self):
-        """Mesmo token deve gerar o mesmo hash sempre."""
-        token = gerar_token_sessao("74839210055")
-        h1 = derivar_session_hash(token)
-        h2 = derivar_session_hash(token)
-        assert h1 == h2
-
-    def test_tokens_diferentes_geram_hashes_diferentes(self):
-        """Tokens de CPFs diferentes devem gerar hashes diferentes."""
-        t1 = gerar_token_sessao("74839210055")
-        t2 = gerar_token_sessao("74839210055")
-        h1 = derivar_session_hash(t1)
-        h2 = derivar_session_hash(t2)
-        assert h1 != h2
-
-    def test_hash_usa_pepper(self):
-        """Hash com PEPPER deve diferir de hash sem PEPPER."""
-        import hashlib
-
-        token = gerar_token_sessao("74839210055")
-        hash_sem_pepper = hashlib.sha256(token.encode("utf-8")).hexdigest()
-        hash_com_pepper = derivar_session_hash(token)
-        assert hash_com_pepper != hash_sem_pepper
-
-    def test_mesmo_token_gera_mesmo_session_hash(self):
-        """Token replay: reutilizar mesmo token gera mesmo hash (determinismo)."""
-        cpf = "74839210055"
-        token = gerar_token_sessao(cpf)
-        hash_1 = derivar_session_hash(token)
-        hash_2 = derivar_session_hash(token)
-        assert hash_1 == hash_2, "Token replay deve gerar mesmo session_hash"
