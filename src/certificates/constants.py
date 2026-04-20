@@ -35,13 +35,13 @@ TIPO_DESCRICAO_MAP: dict[str, str] = {
     "11": "Coorientacao",
 }
 
-# ---------------------------------------------------------------------------
-# Mapeamento de tipos de certificado para endpoints
+# Mapeamento de tipos de certificado para endpoints upstream
 # ---------------------------------------------------------------------------
 
-# Cada entrada: tipo -> (endpoint, funcao_que_monta_query_params)
-# Os params posicionais sao: [cpf, tipo, programa, edicao, sub_evento, ano, id_artigo]
-#                              [0]   [1]   [2]       [3]     [4]         [5]  [6]
+# Cada entrada define o endpoint e a função geradora de query parameters.
+# Os parâmetros posicionais recebidos do scraper são:
+# [cpf, tipo, programa, edicao, sub_evento, ano, id_artigo]
+#  [0]   [1]   [2]       [3]     [4]         [5]  [6]
 
 URL_TYPE_MAP = {
     "1": {

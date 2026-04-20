@@ -19,11 +19,18 @@ from .validators import is_safe_host
 
 log = logger.bind(module=__name__)
 
-router = APIRouter(tags=["Certificados"])
+router = APIRouter(tags=["Proxy"])
 
 
 @router.get(
     "/api/pdf/{ticket}",
+    summary="Streaming de documentos via túnel seguro",
+    description=(
+        "Endpoint de alta segurança que executa o streaming bidirecional de documentos "
+        "binários do sistema upstream. O ticket é decriptado no backend para resolver "
+        "a URL original, aplicando validações rigorosas de SSRF e eliminando a "
+        "necessidade de autenticação direta ou exposição de PII no downstream."
+    ),
     responses={
         200: {"content": {"application/pdf": {}}, "description": "PDF streamado"},
         400: {"model": ErrorResponse, "description": "Ticket invalido"},

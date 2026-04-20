@@ -68,16 +68,44 @@ class HealthResponse(BaseModel):
 # App FastAPI
 # ===========================================================================
 
+tags_metadata = [
+    {
+        "name": "Auth",
+        "description": "Gestão de credenciais e tokens de acesso temporários.",
+    },
+    {
+        "name": "Certificates",
+        "description": "Extração iterativa via processamento upstream no sistema Sispubli.",
+    },
+    {
+        "name": "Proxy",
+        "description": "Túnel seguro para streaming de documentos binários.",
+    },
+    {
+        "name": "System",
+        "description": "Monitoramento de integridade e diagnósticos de infraestrutura.",
+    },
+]
+
 app = FastAPI(
-    title="Sispubli Certificados API",
+    title="Sispubli API",
     description=(
-        "API REST para extracao de certificados do sistema Sispubli/IFS.\n\n"
-        "**Nota de seguranca**: o campo `url_download` usa o padrao URL Template. "
-        "Substitua `{cpf}` pelo CPF real do usuario antes de acessar a URL."
+        "A Sispubli API fornece uma camada de abstração de alta performance sobre o sistema "
+        "Sispubli/IFS, operando sob o padrão de **Vertical Slices**.\n\n"
+        "**Pilares de Arquitetura:**\n"
+        "- **Autenticação**: Gestão de identidade baseada em tokens Fernet com rotação de "
+        "segredos e TTL estrito.\n"
+        "- **Extração de Dados (Scraping)**: Motor de scraping resiliente que consolida "
+        "informações do sistema upstream com otimização de cache.\n"
+        "- **Privacidade e Segurança**: Blindagem de PII conforme LGPD através de hashing "
+        "SHA-256 e mascaramento em repouso.\n"
+        "- **Proxy de Documentos**: Túnel seguro de transporte de binários que elimina o "
+        "vazamento de credenciais no downstream.\n"
     ),
-    version="1.1.0",
+    version="2.1.0",
+    openapi_tags=tags_metadata,
     lifespan=lifespan,
-    docs_url=None,  # Desabilita Swagger padrão
+    docs_url=None,  # Desabilita Swagger padrão para usar versão customizada
     redoc_url=None,  # Desabilita ReDoc padrão
 )
 
@@ -187,7 +215,7 @@ async def _check_upstream_connectivity() -> bool:
         return False
 
 
-@app.get("/", response_model=HealthResponse, tags=["Sistema"])
+@app.get("/", response_model=HealthResponse, tags=["System"])
 async def health_check():
     """Painel de saúde e diagnóstico da API."""
     log.info("Health check acessado")

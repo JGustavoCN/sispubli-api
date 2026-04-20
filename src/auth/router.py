@@ -17,12 +17,18 @@ from .schemas import TokenRequest, TokenResponse
 
 log = logger.bind(module=__name__)
 
-router = APIRouter(tags=["Autenticação"])
+router = APIRouter(tags=["Auth"])
 
 
 @router.post(
     "/api/auth/token",
     response_model=TokenResponse,
+    summary="Geração de credenciais de acesso temporárias",
+    description=(
+        "Normaliza, valida e criptografa o CPF do titular em um token de acesso efêmero. "
+        "O token resultante utiliza criptografia Fernet (AES-128-CBC) e possui um "
+        "tempo de vida (TTL) de 15 minutos."
+    ),
     responses={
         400: {"model": ErrorResponse, "description": "CPF invalido"},
         422: {"model": ErrorResponse, "description": "Erro de validacao de campos"},

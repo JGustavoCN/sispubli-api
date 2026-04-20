@@ -11,15 +11,13 @@ from pydantic import BaseModel, Field
 class CertificadoItem(BaseModel):
     """Representa um certificado individual no retorno da API.
 
-    A url_download usa o padrao URL Template: o campo {cpf} deve ser
-    substituido pelo CPF real do usuario no cliente (Flutter/MCP)
-    antes de realizar o download. Isso evita trafegar dados sensiveis
-    no JSON de resposta.
+    A url_download fornece o recurso final via túnel seguro, eliminando a
+    necessidade de processamento de PII no lado do cliente.
     """
 
     id_unico: str = Field(
         ...,
-        description="Hash SHA-256 unico do certificado (LGPD-compliant, gerado com SALT)",
+        description="Identificador único (SHA-256 + SALT) para anonimato (LGPD).",
         json_schema_extra={
             "example": (
                 "a3f8c2d1e4b7091f6e2a5d8c3b1f4e7a9d..."  # pragma: allowlist secret
@@ -34,17 +32,12 @@ class CertificadoItem(BaseModel):
     url_download: str | None = Field(
         None,
         description=(
-            "URL template para download do certificado. "
-            "Substitua '{cpf}' pelo CPF real antes de acessar. "
-            "Ex: url.replace('{cpf}', cpf_do_usuario)"
+            "Link direto para o endpoint de túnel da API. O acesso a este recurso consome "
+            "um ticket criptografado efêmero, acionando o streaming direto do documento "
+            "binário do sistema upstream, garantindo que nenhuma PII seja manipulada ou "
+            "exposta no lado do cliente (downstream)."
         ),
-        json_schema_extra={
-            "example": (
-                "http://intranet.ifs.edu.br/publicacoes/relat/"
-                "certificado_participacao_process.wsp?"
-                "tmp.tx_cpf={cpf}&tmp.id_programa=1850&tmp.id_edicao=2011"
-            )
-        },
+        json_schema_extra={"example": "https://api.sispubli.edu.br/api/pdf/38f92bd3a84e..."},
     )
     ano: int = Field(
         ...,

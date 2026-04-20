@@ -22,12 +22,20 @@ from .utils import sanitizar_cpf_resposta, substituir_urls_por_tickets
 
 log = logger.bind(module=__name__)
 
-router = APIRouter(tags=["Certificados"])
+router = APIRouter(tags=["Certificates"])
 
 
 @router.get(
     "/api/certificados",
     response_model=CertificadosResponse,
+    summary="Extração e listagem de certificados",
+    description=(
+        "Realiza a extração iterativa de metadados de certificados no sistema upstream "
+        "do IFS. O processo é autenticado via Bearer token, onde o CPF é descriptografado "
+        "no backend para processar as requisições no Sispubli. "
+        "As URLs de download resultantes são automaticamente convertidas em tickets "
+        "protegidos, eliminando a manipulação de PII no downstream."
+    ),
     responses={
         400: {"model": ErrorResponse, "description": "Token invalido"},
         401: {"model": ErrorResponse, "description": "Nao autenticado"},

@@ -77,7 +77,7 @@ cov-html:
 	uv run pytest --cov=src --cov=. --cov-report=html
 
 serve:
-	uv run uvicorn api:app --reload --host 0.0.0.0 --port 8000
+	uv run uvicorn api:app --reload --host 127.0.0.1 --port 8000
 
 run:
 	uv run python scraper.py

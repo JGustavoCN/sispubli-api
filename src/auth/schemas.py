@@ -10,7 +10,7 @@ class TokenRequest(BaseModel):
 
     cpf: str = Field(
         ...,
-        description="CPF do titular (11 digitos, aceita formatacao com pontos/traco)",
+        description="CPF do titular (11 dígitos). Aceita formatação com pontos e traço.",
         json_schema_extra={"example": "74839210055"},
     )
 
@@ -20,5 +20,5 @@ class TokenResponse(BaseModel):
 
     access_token: str = Field(
         ...,
-        description="Token Fernet criptografado (TTL 15 min)",
+        description="Token Fernet criptografado contendo o CPF do usuário (TTL 15 min).",
     )

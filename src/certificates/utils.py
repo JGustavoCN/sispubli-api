@@ -17,11 +17,11 @@ log = logger.bind(module=__name__)
 
 
 def substituir_urls_por_tickets(certificados: list[dict], cpf_real: str) -> list[dict]:
-    """Substitui url_download por /api/pdf/{ticket} criptografados.
+    """Substitui url_download por tickets criptografados (/api/pdf/{ticket}).
 
-    Preenche o placeholder {cpf} da URL com o CPF real do servidor ANTES de
-    encapsular no Ticket Fernet, caso contrario o Sispubli geraria Relatorios
-    Brancos Vazios (Blank Page de 1096 bytes) buscando pelo cpf literal '{cpf}'.
+    Injeta o CPF do titular na URL original antes de encapsulá-la no Ticket
+    Fernet. Este processamento no backend garante que o upstream (Sispubli)
+    receba os parâmetros necessários para gerar o documento binário.
     """
     resultado = []
     for cert in certificados:
@@ -37,7 +37,7 @@ def substituir_urls_por_tickets(certificados: list[dict], cpf_real: str) -> list
 
 
 def sanitizar_cpf_resposta(certificados: list[dict]) -> list[dict]:
-    """Remove qualquer CPF que ainda exista nos campos da resposta."""
+    """Remove ocorrências de PII sensível dos campos da resposta."""
     resultado = []
     for cert in certificados:
         cert_limpo = {}
@@ -46,7 +46,8 @@ def sanitizar_cpf_resposta(certificados: list[dict]) -> list[dict]:
             if key == "id_unico":
                 cert_limpo[key] = value
             elif isinstance(value, str):
-                cert_limpo[key] = CPF_PATTERN.sub("{cpf}", value)
+                # Substitui padrões de CPF por placeholder genérico
+                cert_limpo[key] = CPF_PATTERN.sub("*", value)
             else:
                 cert_limpo[key] = value
         resultado.append(cert_limpo)
@@ -68,10 +69,10 @@ def generate_cert_id(cpf: str, tipo: str, programa: str, edicao: str) -> str:
 
 
 def montar_url(params: list) -> str | None:
-    """Monta a URL template do certificado baseada no tipo.
+    """Monta a URL parametrizada do certificado baseada no tipo.
 
     Returns:
-        URL template com {cpf} ou None se o tipo nao for mapeado.
+        URL base com parâmetros de extração ou None se o tipo não for mapeado.
     """
     if len(params) < 7:
         log.error(f"Parametros insuficientes para montar URL: {len(params)} recebidos (min 7)")
@@ -87,5 +88,5 @@ def montar_url(params: list) -> str | None:
     endpoint = type_config["endpoint"]
     query_params = type_config["params_fn"](params)
     url = f"{BASE_URL}/{endpoint}?{query_params}"
-    log.debug(f"URL template montada [tipo={tipo}]: {url}")
+    log.debug(f"URL parametrizada montada [tipo={tipo}]: {url}")
     return url
