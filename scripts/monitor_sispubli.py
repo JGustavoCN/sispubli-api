@@ -11,6 +11,7 @@ Uso:
 """
 
 import os
+import re
 import sys
 
 import requests
@@ -20,7 +21,7 @@ from dotenv import load_dotenv
 # Adiciona a raiz do projeto ao sys.path para importar logger
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from logger import logger
+from src.core.logger import logger
 
 logger = logger.bind(module=__name__)
 
@@ -69,31 +70,62 @@ def monitor():
         resp_post.raise_for_status()
 
         # Passo 3: Validacao de Contrato (O "Coração" do Scraper)
-        logger.info("[SENTINELA] Passo 3: Validando estrutura de dados...")
+        logger.info("[SENTINELA] Passo 3: Validando estrutura de dados HTML...")
         html = resp_post.text
         soup_post = BeautifulSoup(html, "html.parser")
 
         # Verificamos se existem links de certificados
         links = soup_post.find_all("a", href=True)
         cert_links = [link for link in links if "abrirCertificado" in link["href"]]
-        if len(cert_links) > 0:
-            logger.info(f"OK: Encontrados {len(cert_links)} certificados com padrao JS.")
-            logger.info("OK: Contrato Sispubli permanece INTEGRAL.")
-            sys.exit(0)
 
         # Se nao houver certificados, checamos se ha mensagem ou se o grid existe
         grid = soup_post.find("table", id=lambda x: x and "certificadosDisponiveis" in x)
-        if grid:
-            logger.info("OK: Grid de resultados encontrado (mesmo que vazio).")
-            logger.info("OK: Contrato Sispubli permanece INTEGRAL.")
-            sys.exit(0)
 
-        # Se chegou aqui, o layout mudou drasticamente
-        logger.warning("[AVISO] Nao foi possivel encontrar o grid de certificados.")
-        logger.info("📄 Preview do HTML recebido (primeiros 500 chars):")
-        logger.info(html[:500])
-        logger.error("[FALHA] Possivel mudança de contrato no Sispubli Legado.")
-        sys.exit(1)
+        if not grid and len(cert_links) == 0:
+            logger.warning("[AVISO] Nao foi possivel encontrar o grid de certificados.")
+            logger.info("📄 Preview do HTML recebido (primeiros 500 chars):")
+            logger.info(html[:500])
+            logger.error("[FALHA] Possivel mudança de contrato no Sispubli Legado.")
+            sys.exit(1)
+
+        logger.info(f"OK: Estrutura base encontrada. ({len(cert_links)} links)")
+
+        # Passo 4: Validacao de Parametros de Download (JasperReports)
+        if len(cert_links) > 0:
+            logger.info("[SENTINELA] Passo 4: Validando contrato de download (JS Parameters)...")
+
+            test_link = cert_links[0]["href"]
+            match = re.search(r"abrirCertificado\((.*?)\)", test_link)
+
+            if not match:
+                logger.error(f"[FALHA] Link JS com formato inesperado: {test_link}")
+                sys.exit(1)
+
+            params = [p.strip().strip("'") for p in match.group(1).split(",")]
+
+            if len(params) < 4:
+                logger.error(f"[FALHA] Faltam parametros no link JS: {params}")
+                sys.exit(1)
+
+            # Validar consitencia dos parametros criticos
+            if not params[0].isdigit() or len(params[0]) < 11:
+                logger.warning(f"[AVISO] CPF no Link JS parece invalido ou oculto: {params[0]}")
+
+            if not all(p.isdigit() for p in params[1:4]):
+                logger.error(
+                    f"[FALHA] Parametros de JasperReports nao sao numericos: {params[1:4]}"
+                )
+                sys.exit(1)
+
+            logger.info(
+                f"OK: Parametros extraidos com sucesso: "
+                f"Tipo={params[1]}, ID={params[2]}, Ano={params[3]}"
+            )
+        else:
+            logger.info("[AVISO] Sem certificados para validar o Passo 4 (Download).")
+
+        logger.info("OK: Contrato Sispubli (HTML + Download JS) permanece INTEGRAL.")
+        sys.exit(0)
 
     except Exception as e:
         logger.exception(f"[ERRO] CRITICO durante monitoramento: {e}")

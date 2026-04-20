@@ -10,53 +10,25 @@ ATENCAO: Este teste depende de:
     3. Sispubli estar online e respondendo
 """
 
-import os
-
 import pytest
-from dotenv import load_dotenv
-from fastapi.testclient import TestClient
-
-from api import app
-
-# Carregar variaveis de ambiente do .env
-load_dotenv()
 
 
 @pytest.mark.e2e
 class TestSispubliReal:
     """Testes E2E que acessam o Sispubli real."""
 
-    def _get_cpf_teste(self) -> str:
-        """Obtem o CPF de teste do .env ou pula o teste."""
-        cpf = os.getenv("CPF_TESTE")
-        if not cpf:
-            pytest.skip("CPF_TESTE nao definido no .env — pulando teste E2E")
-        return cpf
-
-    def _obter_token(self, client: TestClient, cpf: str) -> str:
-        """Helper para realizar o login e obter o access_token."""
-        response = client.post("/api/auth/token", json={"cpf": cpf})
-        assert response.status_code == 200, f"Falha na autenticacao E2E: {response.text}"
-        return response.json()["access_token"]
-
-    def test_listagem_certificados_real_fluxo_completo(self):
+    def test_listagem_certificados_real_fluxo_completo(self, real_client, token_real, cpf_teste):
         """Busca certificados reais usando o fluxo de autenticacao seguro.
 
         Valida:
-            - Login (POST /api/auth/token)
+            - Login (POST /api/auth/token) - Via fixture token_real
             - Listagem (GET /api/certificados com Bearer Token)
             - Estrutura da resposta e mascaramento de CPF
         """
-        cpf = self._get_cpf_teste()
-        client = TestClient(app)
-
-        # 1. Obter Token
-        token = self._obter_token(client, cpf)
-
         # 2. Listagem Segura
-        response = client.get(
+        response = real_client.get(
             "/api/certificados",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"Authorization": f"Bearer {token_real}"},
         )
 
         assert response.status_code == 200, (
@@ -74,27 +46,23 @@ class TestSispubliReal:
         # CPF deve estar mascarado na resposta JSON
         assert "***" in result["usuario_id"]
         # Seguranca extra: o CPF real nunca deve aparecer no corpo da resposta
-        assert cpf not in response.text
+        assert cpf_teste not in response.text
 
         # Total deve ser coerente
         assert result["total"] == len(result["certificados"])
 
-    def test_estrutura_certificados_reais_com_auth(self):
+    def test_estrutura_certificados_reais_com_auth(self, real_client, token_real, cpf_teste):
         """Valida a estrutura de cada certificado retornado do Sispubli real via Auth."""
-        cpf = self._get_cpf_teste()
-        client = TestClient(app)
-
-        token = self._obter_token(client, cpf)
-        response = client.get(
+        response = real_client.get(
             "/api/certificados",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"Authorization": f"Bearer {token_real}"},
         )
 
         assert response.status_code == 200
         certificados = response.json()["data"]["certificados"]
 
         if len(certificados) == 0:
-            pytest.skip(f"Nenhum certificado encontrado para o CPF ***{cpf[3:6]}***")
+            pytest.skip(f"Nenhum certificado encontrado para o CPF ***{cpf_teste[3:6]}***")
 
         for cert in certificados:
             # Chaves obrigatorias
@@ -107,4 +75,4 @@ class TestSispubliReal:
             if cert["url_download"] is not None:
                 assert cert["url_download"].startswith("/api/pdf/")
                 # O CPF real nao deve estar injetado na URL do ticket de forma visível
-                assert cpf not in cert["url_download"]
+                assert cpf_teste not in cert["url_download"]

@@ -10,12 +10,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dotenv import dotenv_values
 
-from logger import logger
+from src.core.logger import logger
 
 logger = logger.bind(module=__name__)
 
 try:
-    from validators import validar_cpf
+    from src.core.validators import validar_cpf
 except ImportError:
     # Fallback caso ocorra erro no path
     def validar_cpf(cpf):

@@ -1,6 +1,6 @@
 [project]
 name = "sispubli-api"
-version = "1.1.0"
+version = "2.1.0"
 description = "API REST para extracao de certificados do sistema Sispubli/IFS"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -71,7 +71,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-m 'not e2e' --cov=. --cov-report=term-missing --tb=short"
+addopts = "-m 'not e2e' --cov=src --cov=. --cov-report=html --tb=short"
 markers = [
     "e2e: Testes end-to-end que acessam o Sispubli real (localmente via pre-push)",
 ]

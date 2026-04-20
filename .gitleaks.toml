@@ -1,0 +1,15 @@
+# Configuração do Gitleaks para Sispubli API
+# Estende as regras padrão e adiciona exclusões para infraestrutura
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ignorar arquivos de infraestrutura e segredos mockados de testes"
+paths = [
+    '''\.secrets\.baseline$''',
+    '''tests/test_fail_fast\.py$''',
+    '''uv\.lock$''',
+    '''pyproject\.toml$''',
+    '''Makefile$'''
+]

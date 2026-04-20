@@ -3,18 +3,14 @@ import re
 
 import pytest
 
-from validators import validar_cpf
+from src.core.validators import validar_cpf
+
+# Forçar ambiente de teste ANTES de qualquer import do src (Silencia Loguru e ativa mocks)
+os.environ["ENVIRONMENT"] = "test"
 
 # Valores de Mock Oficiais (LGPD Blindagem)
 MOCK_CPF = "74839210055"
 MOCK_NAME = "USUARIO MOCK DA SILVA"
-
-
-@pytest.fixture(autouse=True)
-def _set_test_environment(monkeypatch):
-    """Define ENVIRONMENT=test para silenciar o Loguru durante testes."""
-    monkeypatch.setenv("ENVIRONMENT", "test")
-
 
 # =============================================================================
 # VCR.py — Configuracao de Cassettes e Sanitizacao de PII
