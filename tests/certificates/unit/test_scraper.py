@@ -164,6 +164,44 @@ class TestGenerateCertId:
         # Em ambiente de teste, o SALT padrao e "chave_secreta_padrao"
         assert hash_com_salt != hash_sem_salt
 
+    def test_hash_unicidade_sub_evento_diferente(self):
+        """Bug fix: sub_eventos diferentes do mesmo evento devem gerar IDs distintos.
+
+        Cenario real: Tipo 3 (Mini-Curso) onde varias palestras pertencem
+        ao mesmo programa+edicao mas diferem no sub_evento (params[4]).
+        Sem incluir sub_evento no hash, todos colapsam para o mesmo id_unico.
+        """
+        h1 = generate_cert_id("74839210055", "3", "100", "200", "55", "0")
+        h2 = generate_cert_id("74839210055", "3", "100", "200", "66", "0")
+        assert h1 != h2, "Colisao de hash! Sub-eventos diferentes geraram o mesmo id_unico"
+
+    def test_hash_unicidade_id_artigo_diferente(self):
+        """Bug fix: id_artigos diferentes do mesmo evento devem gerar IDs distintos.
+
+        Cenario: Tipo 7 (Orientacao) onde orientador tem multiplos artigos
+        no mesmo programa+edicao.
+        """
+        h1 = generate_cert_id("74839210055", "7", "100", "200", "0", "88")
+        h2 = generate_cert_id("74839210055", "7", "100", "200", "0", "99")
+        assert h1 != h2, "Colisao de hash! Artigos diferentes geraram o mesmo id_unico"
+
+    def test_hash_unicidade_cenario_real_tipo3(self):
+        """Regressao: simula o cenario real de colisao reportado pelo usuario.
+
+        4 palestras do mesmo evento (programa=1850, edicao=2024) com
+        sub_eventos diferentes devem gerar 4 hashes distintos.
+        """
+        hashes = set()
+        sub_eventos = ["10", "20", "30", "40"]
+        for sub in sub_eventos:
+            h = generate_cert_id("74839210055", "3", "1850", "2024", sub, "0")
+            hashes.add(h)
+
+        assert len(hashes) == 4, (
+            f"Esperados 4 hashes unicos, mas apenas {len(hashes)} gerados. "
+            "Colisao de sub_eventos no mesmo evento!"
+        )
+
 
 # ===================================================================
 # TESTES UNITARIOS: montar_url (URL Template)

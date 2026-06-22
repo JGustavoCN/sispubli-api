@@ -54,16 +54,26 @@ def sanitizar_cpf_resposta(certificados: list[dict]) -> list[dict]:
     return resultado
 
 
-def generate_cert_id(cpf: str, tipo: str, programa: str, edicao: str) -> str:
+def generate_cert_id(
+    cpf: str,
+    tipo: str,
+    programa: str,
+    edicao: str,
+    sub_evento: str = "0",
+    id_artigo: str = "0",
+) -> str:
     """Gera um ID unico (hash SHA-256 + SALT) para um certificado.
 
-    Concatena SALT+cpf+tipo+programa+edicao e gera o hash hexadecimal.
+    Concatena SALT+cpf+tipo+programa+edicao+sub_evento+id_artigo e gera
+    o hash hexadecimal. Todos os 6 campos discriminatorios sao incluidos
+    para evitar colisoes entre atividades do mesmo evento pai.
     """
-    raw = f"{HASH_SALT}{cpf}{tipo}{programa}{edicao}"
+    raw = f"{HASH_SALT}{cpf}{tipo}{programa}{edicao}{sub_evento}{id_artigo}"
     cert_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
     log.debug(
         f"Hash SHA-256 gerado para [cpf={mask_cpf(cpf)}, tipo={tipo},"
-        f" prog={programa}, edic={edicao}]: {cert_hash[:16]}..."
+        f" prog={programa}, edic={edicao},"
+        f" sub={sub_evento}, art={id_artigo}]: {cert_hash[:16]}..."
     )
     return cert_hash
 

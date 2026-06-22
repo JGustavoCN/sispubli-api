@@ -140,9 +140,11 @@ def fetch_all_certificates(cpf: str) -> dict:
         tipo = params[1] if len(params) > 1 else "0"
         programa = params[2] if len(params) > 2 else "0"
         edicao = params[3] if len(params) > 3 else "0"
+        sub_evento = params[4] if len(params) > 4 else "0"
         ano_raw = params[5] if len(params) > 5 else "0"
+        id_artigo = params[6] if len(params) > 6 else "0"
 
-        cert_id = generate_cert_id(cpf_cert, tipo, programa, edicao)
+        cert_id = generate_cert_id(cpf_cert, tipo, programa, edicao, sub_evento, id_artigo)
         url = montar_url(params)
 
         try:
