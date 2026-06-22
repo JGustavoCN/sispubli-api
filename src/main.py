@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.encoders import jsonable_encoder
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -109,6 +110,14 @@ app = FastAPI(
     redoc_url=None,  # Desabilita ReDoc padrão
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Rotas Modularizadas (Vertical Slices)
@@ -120,6 +129,8 @@ app.include_router(proxy_router)
 @app.get("/docs", include_in_schema=False)
 async def custom_swagger_ui_html():
     """Renderiza interface Swagger UI customizada com favicon local."""
+    if not app.openapi_url:
+        raise HTTPException(status_code=404, detail="OpenAPI schema is disabled")
     return get_swagger_ui_html(
         openapi_url=app.openapi_url,
         title=app.title + " - Swagger UI",
@@ -131,6 +142,8 @@ async def custom_swagger_ui_html():
 @app.get("/redoc", include_in_schema=False)
 async def redoc_html():
     """Renderiza interface ReDoc customizada com favicon local."""
+    if not app.openapi_url:
+        raise HTTPException(status_code=404, detail="OpenAPI schema is disabled")
     return get_redoc_html(
         openapi_url=app.openapi_url,
         title=app.title + " - ReDoc",
