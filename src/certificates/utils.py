@@ -7,6 +7,7 @@ incluindo geracao de IDs (hashing) e montagem de URLs.
 
 import copy
 import hashlib
+import re
 
 from src.core.logger import logger
 from src.core.security import CPF_PATTERN, gerar_ticket_pdf, mask_cpf
@@ -100,3 +101,22 @@ def montar_url(params: list) -> str | None:
     url = f"{BASE_URL}/{endpoint}?{query_params}"
     log.debug(f"URL parametrizada montada [tipo={tipo}]: {url}")
     return url
+
+
+def limpar_titulo(titulo: str) -> str:
+    """Limpa prefixos redundantes do titulo do certificado.
+
+    Remove os textos fixos gerados pelo Sispubli que apenas repetem
+    o 'tipo' da atividade (informacao ja contida em tipo_descricao).
+
+    Exemplos:
+        "Participação no(a) mini curso, Como usar..." -> "Como usar..."
+        "Participação no(a) palestra, Scrum..." -> "Scrum..."
+        "Participação no(a) PFisc 2023" -> "PFisc 2023"
+    """
+    # Remove "Participacao no(a) " seguido opcionalmente de
+    # um texto indicativo do tipo ate uma virgula ou hifen
+    padrao = r"^Participa[cç][aã]o no\(a\)\s*(?:[^,]+,\s*)?"
+
+    titulo_limpo = re.sub(padrao, "", titulo, flags=re.IGNORECASE).strip()
+    return titulo_limpo

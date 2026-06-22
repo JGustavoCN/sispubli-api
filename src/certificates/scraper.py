@@ -17,7 +17,7 @@ from src.core.security import mask_cpf
 
 from .constants import MAX_PAGES, TIPO_DESCRICAO_MAP, URL
 from .parsers import extract_data, extract_next_offset
-from .utils import generate_cert_id, montar_url
+from .utils import generate_cert_id, limpar_titulo, montar_url
 
 log = logger.bind(module=__name__)
 
@@ -159,7 +159,7 @@ def fetch_all_certificates(cpf: str) -> dict:
         certificados_finais.append(
             {
                 "id_unico": cert_id,
-                "titulo": cert["title"],
+                "titulo": limpar_titulo(cert["title"]),
                 "url_download": url,
                 "ano": ano,
                 "tipo_codigo": tipo_codigo,

@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 from src.certificates.constants import TIPO_DESCRICAO_MAP
 from src.certificates.parsers import extract_next_offset
 from src.certificates.scraper import fetch_all_certificates
-from src.certificates.utils import generate_cert_id, montar_url
+from src.certificates.utils import generate_cert_id, limpar_titulo, montar_url
 from src.core.security import mask_cpf
 
 # ---------------------------------------------------------------------------
@@ -352,6 +352,44 @@ class TestExtractNextOffset:
 
 
 # ===================================================================
+# TESTES UNITARIOS: limpar_titulo
+# ===================================================================
+
+
+class TestLimparTitulo:
+    """Testes para a remocao de prefixos e sujeiras dos titulos dos certificados."""
+
+    def test_limpar_titulo_minicurso(self):
+        sujo = "Participação no(a) mini curso, Como usar o GPT como um assistente de estudos."
+        esperado = "Como usar o GPT como um assistente de estudos."
+        assert limpar_titulo(sujo) == esperado
+
+    def test_limpar_titulo_palestra(self):
+        sujo = "Participação no(a) palestra, Scrum e a transformação digital"
+        esperado = "Scrum e a transformação digital"
+        assert limpar_titulo(sujo) == esperado
+
+    def test_limpar_titulo_oficina(self):
+        sujo = "Participação no(a) oficina, Netiqueta - Boas maneiras"
+        esperado = "Netiqueta - Boas maneiras"
+        assert limpar_titulo(sujo) == esperado
+
+    def test_limpar_titulo_trabalho(self):
+        sujo = "Participação no(a) trabalho científico, 2ª Mostra"
+        esperado = "2ª Mostra"
+        assert limpar_titulo(sujo) == esperado
+
+    def test_limpar_titulo_evento_simples(self):
+        sujo = "Participação no(a) PFisc 2023"
+        esperado = "PFisc 2023"
+        assert limpar_titulo(sujo) == esperado
+
+    def test_limpar_titulo_sem_prefixo(self):
+        puro = "Apresentação do Artigo Científico na SEPEX"
+        assert limpar_titulo(puro) == puro
+
+
+# ===================================================================
 # TESTES DE INTEGRACAO MOCKADA: fetch_all_certificates
 # ===================================================================
 
@@ -401,8 +439,8 @@ class TestFetchAllCertificates:
         assert mock_session.post.call_count == 2
 
         titulos = [c["titulo"] for c in result["certificados"]]
-        assert "Participacao no(a) Evento Alpha 2024" in titulos
-        assert "Participacao no(a) Evento Beta 2024" in titulos
+        assert "Evento Alpha 2024" in titulos
+        assert "Evento Beta 2024" in titulos
 
         for cert in result["certificados"]:
             assert "id_unico" in cert
